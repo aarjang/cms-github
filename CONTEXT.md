@@ -1,79 +1,89 @@
-# PROJECT CONTEXT — cms-github
+# PROJECT CONTEXT — ato
 <!-- Claude reads this FIRST. Keep it under 200 lines. -->
-<!-- Last updated: 2026-06-27 by [WHO] -->
+<!-- Last updated: 2026-06-27 by Arjang -->
 
 ## TL;DR (5 lines max)
-<!-- What does this project do? What's the core loop? -->
-[ONE_SENTENCE_PURPOSE]
+**ato** (AI Token Optimizer) — یک CLI ابزار bash برای کاهش ۷۰-۹۰٪ مصرف توکن در Claude Code.
+با مدیریت `CONTEXT.md` در هر پروژه، کلود فقط اطلاعات ضروری رو می‌خونه نه کل کدبیس.
 
-Stack: [TECH_STACK]
-Entry points: [MAIN_FILES_CLAUDE_NEEDS]
-Active branch: [GIT_BRANCH]
-Last meaningful change: [WHAT_CHANGED]
+Stack: Pure Bash (POSIX-compatible, no external deps)
+Entry points: `bin/ato`, `install.sh`
+Active branch: main
+Last meaningful change: rename از cms به ato (v2.0.0)
 
 ---
 
 ## Architecture snapshot
-<!-- Folder structure — only folders Claude needs to touch -->
 ```
-[PROJECT_ROOT]/
-├── [FOLDER_1]/          # [ONE_LINE_PURPOSE]
-│   ├── [KEY_FILE]       # [WHAT_IT_DOES]
-│   └── [KEY_FILE]       # [WHAT_IT_DOES]
-├── [FOLDER_2]/          # [ONE_LINE_PURPOSE]
-└── [CONFIG_FILE]        # [WHAT_IT_DOES]
+ato/
+├── bin/
+│   ├── ato              # اسکریپت اصلی CLI (~40KB, همه commands اینجاست)
+│   └── cms              # migration shim — هدایت به ato
+├── templates/           # تمپلیت‌های پیش‌فرض برای پروژه‌های جدید
+│   ├── CONTEXT.md       # تمپلیت خالی CONTEXT.md
+│   ├── CLAUDE.md        # تمپلیت CLAUDE.md با on-startup rules
+│   ├── TASKS.md         # تمپلیت جدول وظایف
+│   └── DECISIONS.md     # تمپلیت ثبت تصمیمات
+├── demo/                # پروژه نمونه برای تست و demo
+├── install.sh           # نصب یک‌خطی (curl | bash)
+└── README.md            # مستندات عمومی
 ```
 
 ## Contracts (do not break)
-<!-- API signatures, DB schema, env vars — things Claude must not change without asking -->
 
-### Environment variables needed
+### Environment variables
 ```
-[VAR_NAME]=[DESCRIPTION_NOT_VALUE]
-[VAR_NAME]=[DESCRIPTION_NOT_VALUE]
-```
-
-### Key interfaces / types
-```typescript
-// [INTERFACE_NAME] — used by [WHO]
-interface [NAME] {
-  [FIELD]: [TYPE]; // [EXPLANATION]
-}
+ATO_TEMPLATES=$HOME/.ato/templates   # مسیر تمپلیت‌های global
+ATO_INSTALL_DIR=$HOME/bin            # مسیر نصب باینری
 ```
 
-### DB tables (touch with care)
-- `[TABLE]`: [purpose], PK=[field], critical indexes=[fields]
+### فایل‌های stats
+```
+$HOME/.ato/stats.json   # آمار global (همه پروژه‌ها)
+.ato-stats.json         # آمار local (همین پروژه)
+```
+
+### Commands اصلی
+```
+ato init [name]     → تولید CONTEXT.md + CLAUDE.md + نصب stop-hook
+ato sync            → آپدیت CONTEXT.md (branch, changed files, git log)
+ato status          → نمایش وضعیت پروژه + token budget
+ato update          → self-update از GitHub
+ato add / focus / done  → مدیریت اختیاری tasks
+```
 
 ---
 
 ## What Claude should NOT do
-<!-- Anti-patterns, known footguns, things that broke before -->
-- ❌ [THING_TO_AVOID] — because [REASON]
-- ❌ Never run `[DANGEROUS_COMMAND]` — it [BAD_OUTCOME]
-- ❌ Do not modify `[FILE]` directly — use `[CORRECT_WAY]` instead
+- ❌ استفاده از `jq` یا هر ابزار خارجی — ato باید بدون dependency کار کنه
+- ❌ استفاده از `sed -i` بدون suffix روی macOS — BSD sed فرق داره با GNU
+- ❌ تغییر مستقیم `install.sh` بدون بررسی PATH و shell detection
+- ❌ شکستن سازگاری POSIX — باید روی macOS (BSD tools) و Linux هر دو کار کنه
 
 ---
 
 ## How to run locally
 ```bash
-# Setup (once)
-[SETUP_COMMAND]
+# نصب
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
 
-# Dev
-[DEV_COMMAND]
+# تست روی پروژه جاری
+ato init
+ato sync
+ato status
 
-# Test
-[TEST_COMMAND]
+# تست self-update
+ato update
 ```
 
 ---
 
 ## Active work area
-<!-- Point Claude here — reduces file scanning -->
-Current focus: `ARCHIVE.md bin/cms CLAUDE.md CONTEXT.md DECISIONS.md TASKS.md`
-Files in scope for current task: 
-- `[FILE_1]` — [why relevant]
-- `[FILE_2]` — [why relevant]
+Current focus: `.gitignore CONTEXT.md`
+Files in scope for current task:
+- `bin/ato` — اسکریپت اصلی، همه commands اینجاست
+- `bin/cms` — migration shim از cms به ato
+- `templates/` — تمپلیت‌هایی که با `ato init` کپی می‌شن
 
 ---
 <!-- Claude: read TASKS.md for what to do, DECISIONS.md if you need to understand why -->

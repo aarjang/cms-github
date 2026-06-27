@@ -8,3 +8,6 @@ Thumbs.db
 
 # Test artifacts
 /tmp/
+
+# ATO stats
+.ato-stats.json
