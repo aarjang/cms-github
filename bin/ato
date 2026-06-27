@@ -320,6 +320,15 @@ _detect_conventions() {
   echo "  ${parts[*]}"
 }
 
+_detect_god_files() {
+  local result
+  result=$(git log --since="90 days ago" --name-only --format="" 2>/dev/null | \
+    grep -v "^$\|\.lock$\|CONTEXT\.md\|CLAUDE\.md\|\.ato-stats\|\.cms-stats\|\.gitignore" | \
+    sort | uniq -c | sort -rn | head -7 | \
+    awk '{printf "  %-45s (%d changes)\n", $2, $1}')
+  [[ -n "$result" ]] && echo "$result" || echo "  [no git history yet]"
+}
+
 _make_bar() {
   local filled="$1" total="$2" bar=""
   local i
@@ -357,7 +366,7 @@ _generate_tree() {
 _auto_fill_context() {
   local project="$1"
   local stack entry run_cmd test_cmd build_cmd lint_cmd description branch tree
-  local key_deps env_vars conventions git_log
+  local key_deps env_vars conventions git_log god_files
 
   info "Scanning project..."
   description=$(_detect_description)
@@ -370,6 +379,7 @@ _auto_fill_context() {
   key_deps=$(_detect_key_deps)
   env_vars=$(_detect_env_vars)
   conventions=$(_detect_conventions)
+  god_files=$(_detect_god_files)
   branch=$(git branch --show-current 2>/dev/null || echo "main")
   tree=$(_generate_tree)
   git_log=$(git log --oneline -5 --format="  %h %s (%ar)" 2>/dev/null || echo "  [no git history yet]")
@@ -409,6 +419,9 @@ $env_vars
 
 ## Conventions
 $conventions
+
+## Hot files (most-changed — read these first)
+$god_files
 
 ## Recent git history
 $git_log
@@ -512,6 +525,93 @@ _pick_task() {
   echo ""
   [[ -z "$choice" ]] && { error "No task selected."; exit 1; }
   cmd_focus "$choice"
+}
+
+_auto_focus() {
+  [[ ! -f "$CONTEXT_FILE" ]] && { error "CONTEXT.md not found — run: ato init"; exit 1; }
+
+  local branch modified_files recent_files all_focus_files focus_area focused
+
+  branch=$(git branch --show-current 2>/dev/null || echo "main")
+
+  # Signal 1: currently modified/staged files (strongest signal)
+  modified_files=$(git status --short 2>/dev/null | \
+    awk '{print $NF}' | \
+    grep -v "^$\|CONTEXT\.md\|CLAUDE\.md\|\.ato-stats\|\.cms-stats" | head -6)
+
+  # Signal 2: files touched in last 7 days (recent context)
+  recent_files=$(git log --since="7 days ago" --name-only --format="" 2>/dev/null | \
+    grep -v "^$\|CONTEXT\.md\|CLAUDE\.md\|\.lock$\|\.ato-stats\|\.cms-stats" | \
+    sort | uniq -c | sort -rn | awk '{print $2}' | head -8)
+
+  # Merge deduped: modified first, then recent
+  all_focus_files=$(printf "%s\n%s" "$modified_files" "$recent_files" | \
+    grep -v "^$" | awk '!seen[$0]++' | head -8)
+
+  if [[ -z "$all_focus_files" ]]; then
+    warn "No recent changes detected — nothing to focus on."
+    info "Make some changes or run: ato focus <task-id>"
+    return
+  fi
+
+  # Derive focus area name from branch (strip common prefixes)
+  focus_area=$(echo "$branch" | \
+    sed 's|^feature/||; s|^feat/||; s|^fix/||; s|^hotfix/||; s|^chore/||; s|^refactor/||' | \
+    sed 's/-/ /g; s/_/ /g')
+  { [[ "$focus_area" == "main" ]] || [[ "$focus_area" == "master" ]] || \
+    [[ "$focus_area" == "develop" ]]; } && focus_area="current changes"
+
+  focused=".ato_focus_auto.md"
+
+  {
+    echo "# Claude Code — Auto-Focus Session"
+    echo "# Area: $focus_area  |  branch: $branch  |  $(date +%Y-%m-%d\ %H:%M)"
+    echo ""
+    echo "## Context (read this first):"
+    cat "$CONTEXT_FILE"
+    echo ""
+    echo "---"
+    echo "## Auto-detected work area: $focus_area"
+    echo ""
+    echo "Focus ONLY on these files (derived from git signals):"
+    echo ""
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      if [[ -f "$f" ]]; then
+        local lines
+        lines=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+        echo "  - \`$f\`  ($lines lines)"
+      else
+        echo "  - \`$f\`"
+      fi
+    done <<< "$all_focus_files"
+    echo ""
+    echo "### Recent commits touching these files:"
+    # shellcheck disable=SC2086
+    git log --since="14 days ago" --oneline -- $all_focus_files 2>/dev/null | \
+      head -5 | awk '{print "  " $0}' || echo "  [none]"
+    echo ""
+    echo "---"
+    echo "## Session rules:"
+    echo "1. Only read files listed above — do NOT explore the rest of the codebase"
+    echo "2. Ask before touching any file not in scope"
+    echo "3. Keep changes minimal and targeted"
+    echo "4. When done: report DONE + one-line summary"
+  } > "$focused"
+
+  record_session 0
+
+  success "Auto-focused: $focus_area"
+  echo ""
+  info "Files in scope:"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && dim "    $f"
+  done <<< "$all_focus_files"
+  echo ""
+  info "Paste into Claude Code:"
+  echo ""
+  echo -e "${BOLD}    Read $focused and follow the session rules inside it.${RESET}"
+  echo ""
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────
@@ -656,8 +756,7 @@ cmd_focus() {
   local task_id="${1:-}"
 
   if [[ -z "$task_id" ]]; then
-    [[ ! -f "$TASKS_FILE" ]] && { error "No TASKS.md — run: ato init"; exit 1; }
-    _pick_task
+    _auto_focus
     return
   fi
 
