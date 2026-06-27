@@ -1,0 +1,589 @@
+#!/usr/bin/env bash
+# cms — Context Management System for Claude Code
+# Reduces token usage by 70-90% per session
+# https://github.com/aarjang/cms
+
+set -euo pipefail
+
+VERSION="1.1.0"
+CONTEXT_FILE="CONTEXT.md"
+TASKS_FILE="TASKS.md"
+DECISIONS_FILE="DECISIONS.md"
+CLAUDE_FILE="CLAUDE.md"
+
+# Stats files
+GLOBAL_STATS="$HOME/.cms/stats.json"
+LOCAL_STATS=".cms-stats.json"
+
+# Templates
+TEMPLATES_DIR="${CMS_TEMPLATES:-$HOME/.cms/templates}"
+
+# Token estimates (lines × avg tokens/line)
+TOKENS_PER_LINE=6
+BASELINE_TOKENS=50000   # avg full codebase read without CMS
+CONTEXT_OVERHEAD=700    # CONTEXT.md + TASKS.md current task
+
+# ─── Colors ──────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'
+DIM='\033[2m'; RESET='\033[0m'
+
+info()    { echo -e "${CYAN}→${RESET} $*"; }
+success() { echo -e "${GREEN}✓${RESET} $*"; }
+warn()    { echo -e "${YELLOW}!${RESET} $*"; }
+error()   { echo -e "${RED}✗${RESET} $*" >&2; }
+header()  { echo -e "\n${BOLD}$*${RESET}"; }
+dim()     { echo -e "${DIM}$*${RESET}"; }
+
+# ─── JSON helpers (no jq dependency) ─────────────────────────────────
+json_get() {
+  local file="$1" key="$2"
+  grep -o "\"$key\":[^,}]*" "$file" 2>/dev/null | \
+    head -1 | sed 's/"[^"]*":\s*//' | tr -d '"' || echo "0"
+}
+
+json_init_global() {
+  mkdir -p "$(dirname "$GLOBAL_STATS")"
+  if [[ ! -f "$GLOBAL_STATS" ]]; then
+    cat > "$GLOBAL_STATS" << EOF
+{
+  "total_sessions": 0,
+  "total_tokens_saved": 0,
+  "total_tasks_done": 0,
+  "projects": [],
+  "first_use": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "last_use": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  fi
+}
+
+json_init_local() {
+  local project="${1:-$(basename "$PWD")}"
+  if [[ ! -f "$LOCAL_STATS" ]]; then
+    cat > "$LOCAL_STATS" << EOF
+{
+  "project": "$project",
+  "sessions": 0,
+  "tokens_saved": 0,
+  "tasks_done": 0,
+  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "last_session": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  fi
+}
+
+record_session() {
+  local tokens_saved="${1:-0}"
+  local project
+  project="$(basename "$PWD")"
+
+  # Update local stats
+  if [[ -f "$LOCAL_STATS" ]]; then
+    local prev_sessions prev_saved prev_tasks
+    prev_sessions=$(json_get "$LOCAL_STATS" "sessions")
+    prev_saved=$(json_get "$LOCAL_STATS" "tokens_saved")
+    prev_tasks=$(json_get "$LOCAL_STATS" "tasks_done")
+
+    cat > "$LOCAL_STATS" << EOF
+{
+  "project": "$project",
+  "sessions": $((prev_sessions + 1)),
+  "tokens_saved": $((prev_saved + tokens_saved)),
+  "tasks_done": $prev_tasks,
+  "created": "$(json_get "$LOCAL_STATS" "created")",
+  "last_session": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  fi
+
+  # Update global stats
+  json_init_global
+  local g_sessions g_saved g_tasks
+  g_sessions=$(json_get "$GLOBAL_STATS" "total_sessions")
+  g_saved=$(json_get "$GLOBAL_STATS" "total_tokens_saved")
+  g_tasks=$(json_get "$GLOBAL_STATS" "total_tasks_done")
+
+  cat > "$GLOBAL_STATS" << EOF
+{
+  "total_sessions": $((g_sessions + 1)),
+  "total_tokens_saved": $((g_saved + tokens_saved)),
+  "total_tasks_done": $g_tasks,
+  "first_use": "$(json_get "$GLOBAL_STATS" "first_use")",
+  "last_use": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+}
+
+record_task_done() {
+  if [[ -f "$LOCAL_STATS" ]]; then
+    local prev
+    prev=$(json_get "$LOCAL_STATS" "tasks_done")
+    local tmp
+    tmp=$(cat "$LOCAL_STATS")
+    echo "${tmp/\"tasks_done\": $prev/\"tasks_done\": $((prev + 1))}" > "$LOCAL_STATS"
+  fi
+
+  json_init_global
+  local g_prev
+  g_prev=$(json_get "$GLOBAL_STATS" "total_tasks_done")
+  local tmp
+  tmp=$(cat "$GLOBAL_STATS")
+  echo "${tmp/\"total_tasks_done\": $g_prev/\"total_tasks_done\": $((g_prev + 1))}" > "$GLOBAL_STATS"
+}
+
+estimate_session_tokens() {
+  # Estimate tokens for a focused CMS session
+  local ctx_lines=0 task_lines=0
+  [[ -f "$CONTEXT_FILE" ]] && ctx_lines=$(wc -l < "$CONTEXT_FILE")
+  [[ -f "$TASKS_FILE" ]]   && task_lines=$(wc -l < "$TASKS_FILE")
+  echo $(( (ctx_lines + task_lines) * TOKENS_PER_LINE + 500 ))
+}
+
+estimate_project_tokens() {
+  # Estimate tokens if Claude read the whole project
+  find . -name "*.ts" -o -name "*.tsx" -o -name "*.js" \
+         -o -name "*.py" -o -name "*.go" -o -name "*.rs" \
+    2>/dev/null | \
+    grep -v "node_modules\|\.git\|dist\|build\|\.next\|__pycache__" | \
+    xargs wc -l 2>/dev/null | tail -1 | awk '{print $1 * 6}' || echo "$BASELINE_TOKENS"
+}
+
+fmt_tokens() {
+  local n="$1"
+  if [[ $n -ge 1000 ]]; then
+    echo "$((n / 1000))k"
+  else
+    echo "$n"
+  fi
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────
+
+cmd_init() {
+  local project="${1:-$(basename "$PWD")}"
+  header "Initializing CMS — $project"
+
+  for file in "$CONTEXT_FILE" "$TASKS_FILE" "$DECISIONS_FILE" "$CLAUDE_FILE"; do
+    if [[ -f "$file" ]]; then
+      warn "$file already exists — skipping"
+    else
+      local tmpl="$TEMPLATES_DIR/$file"
+      if [[ -f "$tmpl" ]]; then
+        cp "$tmpl" "$file"
+        sed -i.bak "s/\[PROJECT_NAME\]/$project/g" "$file" && rm -f "$file.bak"
+        sed -i.bak "s/\[DATE\]/$(date +%Y-%m-%d)/g" "$file" && rm -f "$file.bak"
+      else
+        _create_minimal "$file" "$project"
+      fi
+      success "Created $file"
+    fi
+  done
+
+  # init stats
+  json_init_local "$project"
+  json_init_global
+  success "Stats tracking initialized"
+
+  # gitignore
+  if [[ -f ".gitignore" ]] && ! grep -q "cms-stats" .gitignore 2>/dev/null; then
+    echo -e "\n# CMS stats (optional: commit to share with team)\n.cms-stats.json" >> .gitignore
+  fi
+
+  echo ""
+  info "Next: fill in CONTEXT.md (10 min = 10x token savings)"
+  dim "  Then: cms focus <task-id>"
+}
+
+cmd_focus() {
+  local task_id="${1:-}"
+  [[ -z "$task_id" ]] && { error "Usage: cms focus <task-id>"; exit 1; }
+
+  local focused=".cms_focus_${task_id}.md"
+  local session_tokens
+  session_tokens=$(estimate_session_tokens)
+  local full_tokens
+  full_tokens=$(estimate_project_tokens)
+  local saved=$(( full_tokens - session_tokens ))
+  [[ $saved -lt 0 ]] && saved=0
+
+  cat > "$focused" << EOF
+# Claude Code — Focused Session ($task_id)
+# Estimated saving: ~$(fmt_tokens $saved) tokens vs full codebase read
+
+## Read these (and ONLY these):
+$(cat "$CONTEXT_FILE" 2>/dev/null || echo "⚠ CONTEXT.md not found — run cms init")
+
+---
+## Your task:
+$(grep -A 30 "### $task_id:" "$TASKS_FILE" 2>/dev/null | \
+  sed '/^### [A-Z]/{ /### '"$task_id"':/!q }' || \
+  echo "Task $task_id not found in TASKS.md")
+
+---
+## Session rules:
+1. Only read files listed under Scope above
+2. Do NOT explore the codebase
+3. Ask before reading anything not listed
+4. When done: check off items in TASKS.md
+5. Report: DONE / BLOCKED + one line
+EOF
+
+  # record session
+  record_session "$saved"
+
+  success "Focus file: $focused"
+  success "Estimated saving this session: ~$(fmt_tokens $saved) tokens"
+  echo ""
+  info "Paste this into Claude Code to start:"
+  echo ""
+  echo -e "${BOLD}  Read $focused and follow the session rules inside it.${RESET}"
+  echo ""
+}
+
+cmd_done() {
+  local task_id="${1:-}"
+  [[ -z "$task_id" ]] && { error "Usage: cms done <task-id>"; exit 1; }
+
+  local archive="ARCHIVE.md"
+  local today
+  today=$(date +%Y-%m-%d)
+
+  if grep -q "### $task_id:" "$TASKS_FILE" 2>/dev/null; then
+    {
+      echo "### $task_id — DONE $today"
+      grep -A 25 "### $task_id:" "$TASKS_FILE" | tail -n +2 | head -20
+      echo ""
+    } >> "$archive"
+    record_task_done
+    success "Task $task_id archived"
+    info "Remove it from TASKS.md and update the next task"
+  else
+    warn "Task $task_id not found as a detail block in TASKS.md"
+  fi
+}
+
+cmd_stats() {
+  local scope="${1:-both}"  # local / global / both
+
+  header "CMS Token Savings"
+
+  # ── Local stats ──────────────────────────────────────────────────
+  if [[ "$scope" != "global" ]] && [[ -f "$LOCAL_STATS" ]]; then
+    local project sessions tokens_saved tasks_done
+    project=$(json_get "$LOCAL_STATS" "project")
+    sessions=$(json_get "$LOCAL_STATS" "sessions")
+    tokens_saved=$(json_get "$LOCAL_STATS" "tokens_saved")
+    tasks_done=$(json_get "$LOCAL_STATS" "tasks_done")
+    local last
+    last=$(json_get "$LOCAL_STATS" "last_session" | cut -c1-10)
+
+    echo ""
+    echo -e "${BOLD}  📁 Project: $project${RESET}"
+    echo -e "  ┌─────────────────────────────────────┐"
+    printf  "  │  Sessions run       %16s  │\n" "$sessions"
+    printf  "  │  Tokens saved       %16s  │\n" "~$(fmt_tokens $tokens_saved)"
+    printf  "  │  Tasks completed    %16s  │\n" "$tasks_done"
+    printf  "  │  Last session       %16s  │\n" "$last"
+    echo -e "  └─────────────────────────────────────┘"
+
+    if [[ $sessions -gt 0 ]] && [[ $tokens_saved -gt 0 ]]; then
+      local per_session=$(( tokens_saved / sessions ))
+      echo -e "  ${DIM}avg $(fmt_tokens $per_session) tokens saved per session${RESET}"
+    fi
+
+    # cost estimate (claude sonnet ~$3/MTok input)
+    if [[ $tokens_saved -gt 0 ]]; then
+      local cost_usd
+      cost_usd=$(echo "scale=2; $tokens_saved * 3 / 1000000" | bc 2>/dev/null || echo "?")
+      echo -e "  ${DIM}≈ \$$cost_usd saved in API costs (@ \$3/MTok)${RESET}"
+    fi
+  fi
+
+  # ── Global stats ─────────────────────────────────────────────────
+  if [[ "$scope" != "local" ]]; then
+    json_init_global
+    local g_sessions g_saved g_tasks g_first
+    g_sessions=$(json_get "$GLOBAL_STATS" "total_sessions")
+    g_saved=$(json_get "$GLOBAL_STATS" "total_tokens_saved")
+    g_tasks=$(json_get "$GLOBAL_STATS" "total_tasks_done")
+    g_first=$(json_get "$GLOBAL_STATS" "first_use" | cut -c1-10)
+
+    echo ""
+    echo -e "${BOLD}  🌍 All projects (since $g_first)${RESET}"
+    echo -e "  ┌─────────────────────────────────────┐"
+    printf  "  │  Total sessions     %16s  │\n" "$g_sessions"
+    printf  "  │  Total tokens saved %16s  │\n" "~$(fmt_tokens $g_saved)"
+    printf  "  │  Total tasks done   %16s  │\n" "$g_tasks"
+    echo -e "  └─────────────────────────────────────┘"
+
+    if [[ $g_saved -gt 0 ]]; then
+      local g_cost
+      g_cost=$(echo "scale=2; $g_saved * 3 / 1000000" | bc 2>/dev/null || echo "?")
+      echo -e "  ${DIM}≈ \$$g_cost total API cost saved${RESET}"
+    fi
+  fi
+  echo ""
+}
+
+cmd_status() {
+  local project
+  project="$(basename "$PWD")"
+  header "CMS Status — $project"
+
+  # context file health
+  echo ""
+  if [[ -f "$CONTEXT_FILE" ]]; then
+    local lines
+    lines=$(wc -l < "$CONTEXT_FILE")
+    local tokens=$(( lines * TOKENS_PER_LINE ))
+    if [[ $lines -gt 200 ]]; then
+      warn "CONTEXT.md: $lines lines (~$(fmt_tokens $tokens) tokens) — too large, run: cms trim"
+    else
+      success "CONTEXT.md: $lines lines (~$(fmt_tokens $tokens) tokens) ✓"
+    fi
+  else
+    error "CONTEXT.md missing — run: cms init"
+  fi
+
+  # tasks
+  if [[ -f "$TASKS_FILE" ]]; then
+    local blocked ip next
+    blocked=$(grep -c "^| B-" "$TASKS_FILE" 2>/dev/null || true)
+    ip=$(grep -c "^| P-" "$TASKS_FILE" 2>/dev/null || true)
+    next=$(grep -c "^| N-" "$TASKS_FILE" 2>/dev/null || true)
+    echo -e "  Tasks: 🔴 $blocked blocked  🟡 $ip in progress  🟢 $next up next"
+  fi
+
+  # quick savings estimate
+  echo ""
+  local session_tokens
+  session_tokens=$(estimate_session_tokens)
+  local full_tokens
+  full_tokens=$(estimate_project_tokens)
+  local pct=0
+  [[ $full_tokens -gt 0 ]] && pct=$(( (full_tokens - session_tokens) * 100 / full_tokens ))
+
+  echo -e "  Without CMS : ~$(fmt_tokens $full_tokens) tokens/session"
+  echo -e "  With CMS    : ~$(fmt_tokens $session_tokens) tokens/session"
+  echo -e "  ${GREEN}Saving      : ~${pct}% per session${RESET}"
+
+  # show stats summary
+  cmd_stats "local"
+}
+
+cmd_scope() {
+  local pattern="${1:-*.ts}"
+  header "Token estimate: $pattern"
+  local total=0
+  while IFS= read -r file; do
+    local lines
+    lines=$(wc -l < "$file" 2>/dev/null || echo 0)
+    local tokens=$(( lines * TOKENS_PER_LINE ))
+    total=$(( total + tokens ))
+    printf "  %-52s %5s tokens\n" "$file" "$(fmt_tokens $tokens)"
+  done < <(find . -name "$pattern" \
+    -not -path "*/node_modules/*" -not -path "*/.git/*" \
+    -not -path "*/dist/*" -not -path "*/build/*" \
+    -not -path "*/.next/*" 2>/dev/null | sort)
+  echo ""
+  echo -e "  ${BOLD}Total: ~$(fmt_tokens $total) tokens${RESET}"
+  [[ $total -gt 20000 ]] && warn "Too large for one session — use cms focus"
+}
+
+cmd_trim() {
+  header "CONTEXT.md audit"
+  [[ ! -f "$CONTEXT_FILE" ]] && { error "No CONTEXT.md found"; exit 1; }
+  local issues=0
+  local lines
+  lines=$(wc -l < "$CONTEXT_FILE")
+  [[ $lines -gt 200 ]] && { warn "$lines lines (target: <200)"; ((issues++)) || true; }
+  grep -q "TODO\|FIXME" "$CONTEXT_FILE" && { warn "TODOs found → move to TASKS.md"; ((issues++)) || true; }
+  grep -qP "^\s{0,4}(export|import|def |class |func )" "$CONTEXT_FILE" 2>/dev/null && \
+    { warn "Code found in CONTEXT.md → remove it, keep signatures only"; ((issues++)) || true; }
+  [[ $issues -eq 0 ]] && success "CONTEXT.md looks lean"
+  echo ""
+  dim "Rules: architecture tree only | no file contents | no history | <200 lines"
+}
+
+cmd_prompt() {
+  echo ""
+  echo "─────────────────────────────────────────────"
+  echo "Paste as first message in Claude Code:"
+  echo "─────────────────────────────────────────────"
+  echo ""
+  echo "Read CONTEXT.md fully."
+  echo "Then read ONLY the current task section in TASKS.md."
+  echo "Do NOT read any other files."
+  echo "Tell me: which task, which files you'll touch."
+  echo "Wait for my confirmation before writing code."
+  echo ""
+  echo "─────────────────────────────────────────────"
+}
+
+cmd_reset_stats() {
+  local scope="${1:-local}"
+  if [[ "$scope" == "global" ]]; then
+    rm -f "$GLOBAL_STATS"
+    json_init_global
+    success "Global stats reset"
+  else
+    rm -f "$LOCAL_STATS"
+    json_init_local "$(basename "$PWD")"
+    success "Local stats reset"
+  fi
+}
+
+# ─── Minimal file creator (no templates dir) ──────────────────────────
+_create_minimal() {
+  local file="$1" project="$2"
+  case "$file" in
+    "CONTEXT.md") cat > "$file" << EOF
+# PROJECT CONTEXT — $project
+<!-- Keep under 200 lines. Claude reads this first. -->
+<!-- Updated: $(date +%Y-%m-%d) -->
+
+## TL;DR
+[One sentence: what this project does]
+
+Stack: [tech stack]
+Entry: [main file/folder]
+Branch: [active branch]
+
+## Architecture
+\`\`\`
+[folder tree — trimmed, no file contents]
+\`\`\`
+
+## Contracts
+[env var names, key interfaces, db tables — signatures only]
+
+## Anti-patterns
+- ❌ [never do this] — because [reason]
+
+## Run locally
+\`\`\`bash
+[dev command]
+\`\`\`
+
+## Active scope
+Current focus: \`[path/to/current/work]\`
+<!-- Claude: read TASKS.md for what to do -->
+EOF
+    ;;
+    "TASKS.md") cat > "$file" << EOF
+# TASKS — $project
+
+## 🔴 Blocked
+| ID | Task | Blocked by |
+|----|------|------------|
+
+## 🟡 In Progress
+| ID | Task | Files touched |
+|----|------|--------------|
+
+## 🟢 Up Next
+| ID | Task | Priority |
+|----|------|----------|
+| N-1 | [describe task] | P0 |
+
+---
+
+## Current task detail
+
+### N-1: [Task name]
+**Goal:** [what done looks like]
+**Scope:**
+- \`[file]\` — [what to change]
+
+**Do NOT touch:** [files/folders off limits]
+
+**Done when:**
+- [ ] [acceptance criterion]
+
+**Test:** \`[test command]\`
+EOF
+    ;;
+    "DECISIONS.md") cat > "$file" << EOF
+# DECISIONS — $project
+<!-- Why things are the way they are. -->
+
+### DEC-001 [Title]
+- **Date:** $(date +%Y-%m-%d)
+- **Decision:** [what was decided]
+- **Rationale:** [why]
+- **Alternatives rejected:** [what else was considered]
+EOF
+    ;;
+    "CLAUDE.md") cat > "$file" << EOF
+# CLAUDE.md
+<!-- Claude Code reads this automatically every session -->
+
+## Startup
+1. Read CONTEXT.md fully
+2. Read current task section in TASKS.md only
+3. Say: "Working on [task-id]: [name]. Will touch: [files]."
+4. Wait for confirmation before writing code
+
+## Rules
+- Only read files listed in current task scope
+- Ask before exploring anything else
+- No code before scope is confirmed
+- When done: check TASKS.md checkboxes + report status
+EOF
+    ;;
+  esac
+}
+
+# ─── Help ────────────────────────────────────────────────────────────
+cmd_help() {
+  echo ""
+  echo -e "${BOLD}cms v${VERSION}${RESET} — Context Management System for Claude Code"
+  echo -e "${DIM}Reduce token usage by 70-90% per session${RESET}"
+  echo ""
+  echo -e "${BOLD}COMMANDS${RESET}"
+  echo "  init [name]          Create CMS files in current project"
+  echo "  focus <task-id>      Generate focused prompt + record session"
+  echo "  done <task-id>       Archive completed task + update stats"
+  echo "  stats [local|global] Show token savings report"
+  echo "  status               Project health + quick stats"
+  echo "  scope <pattern>      Estimate token cost of a file set"
+  echo "  trim                 Audit CONTEXT.md for bloat"
+  echo "  prompt               Print optimal Claude Code session starter"
+  echo "  reset-stats [global] Reset stats (local by default)"
+  echo "  help                 Show this help"
+  echo ""
+  echo -e "${BOLD}DAILY WORKFLOW${RESET}"
+  echo "  cms focus N-1        → before each Claude Code session"
+  echo "  cms done N-1         → after task complete"
+  echo "  cms stats            → see your savings"
+  echo ""
+  echo -e "${BOLD}FIRST TIME IN A PROJECT${RESET}"
+  echo "  cms init && fill CONTEXT.md && cms focus N-1"
+  echo ""
+}
+
+# ─── Router ──────────────────────────────────────────────────────────
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    init)         cmd_init "$@" ;;
+    focus)        cmd_focus "$@" ;;
+    done)         cmd_done "$@" ;;
+    stats)        cmd_stats "$@" ;;
+    status)       cmd_status "$@" ;;
+    scope)        cmd_scope "$@" ;;
+    trim)         cmd_trim "$@" ;;
+    prompt)       cmd_prompt ;;
+    reset-stats)  cmd_reset_stats "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *)
+      error "Unknown command: $cmd"
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

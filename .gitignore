@@ -1,0 +1,10 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# CMS local stats (optional to commit)
+.cms-stats.json
+.cms_focus_*.md
+
+# Test artifacts
+/tmp/
