@@ -590,9 +590,9 @@ cmd_sync() {
 
   # Update git history block in-place
   awk \
-    -v log="$git_log_inline" \
+    -v gitlog="$git_log_inline" \
     '
-    /^## Recent git history/ { print; print log; skip=1; next }
+    /^## Recent git history/ { print; print gitlog; skip=1; next }
     skip && /^## /           { skip=0 }
     !skip                    { print }
     ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
