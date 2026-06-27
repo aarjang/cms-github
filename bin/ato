@@ -556,7 +556,7 @@ _auto_focus() {
 
   # Merge deduped: modified first, then recent
   all_focus_files=$(printf "%s\n%s" "$modified_files" "$recent_files" | \
-    grep -v "^$" | awk '!seen[$0]++' | head -8)
+    grep -v "^$" | awk '!seen[$0]++' | head -8 || true)
 
   if [[ -z "$all_focus_files" ]]; then
     warn "No recent changes detected — nothing to focus on."
