@@ -622,7 +622,18 @@ cmd_init() {
 
   # CONTEXT.md
   if [[ -f "$CONTEXT_FILE" ]]; then
-    warn "$CONTEXT_FILE already exists — skipping (run: ato sync to refresh)"
+    warn "$CONTEXT_FILE already exists."
+    printf "  ${BOLD}Regenerate it? This will overwrite your current context. [y/N]${RESET} "
+    local answer
+    read -r answer </dev/tty 2>/dev/null || answer="n"
+    echo ""
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+      cp "$CONTEXT_FILE" "${CONTEXT_FILE}.bak"
+      info "Backup saved → ${CONTEXT_FILE}.bak"
+      _auto_fill_context "$project"
+    else
+      info "Keeping existing $CONTEXT_FILE"
+    fi
   else
     _auto_fill_context "$project"
   fi
