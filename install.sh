@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# CMS installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/aarjang/cms/main/install.sh | bash
+# ato installer — AI Token Optimizer for Claude Code
+# Usage: curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
 
 set -euo pipefail
 
-REPO="https://raw.githubusercontent.com/aarjang/cms-github/main"
-INSTALL_DIR="${CMS_INSTALL_DIR:-$HOME/bin}"
-TEMPLATES_DIR="$HOME/.cms/templates"
+REPO="https://raw.githubusercontent.com/aarjang/ato/main"
+INSTALL_DIR="${ATO_INSTALL_DIR:-$HOME/bin}"
+TEMPLATES_DIR="$HOME/.ato/templates"
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-echo -e "${BOLD}Installing CMS — Context Management System${RESET}"
+echo -e "${BOLD}Installing ato — AI Token Optimizer for Claude Code${RESET}"
 echo ""
 
 # Create dirs
 mkdir -p "$INSTALL_DIR" "$TEMPLATES_DIR"
 
-# Download cms script
-echo -e "${CYAN}→${RESET} Downloading cms..."
-curl -fsSL "$REPO/bin/cms" -o "$INSTALL_DIR/cms"
-chmod +x "$INSTALL_DIR/cms"
+# Download ato script
+echo -e "${CYAN}→${RESET} Downloading ato..."
+curl -fsSL "$REPO/bin/ato" -o "$INSTALL_DIR/ato"
+chmod +x "$INSTALL_DIR/ato"
 
 # Download templates
 echo -e "${CYAN}→${RESET} Downloading templates..."
@@ -36,18 +36,18 @@ elif [[ "$SHELL" == *"bash"* ]]; then
 fi
 
 if [[ -n "$SHELL_RC" ]]; then
-  if ! grep -q 'CMS_TEMPLATES' "$SHELL_RC" 2>/dev/null; then
+  if ! grep -q 'ATO_TEMPLATES' "$SHELL_RC" 2>/dev/null; then
     echo "" >> "$SHELL_RC"
-    echo '# CMS — Context Management System' >> "$SHELL_RC"
+    echo '# ato — AI Token Optimizer' >> "$SHELL_RC"
     echo "export PATH=\"\$HOME/bin:\$PATH\"" >> "$SHELL_RC"
-    echo "export CMS_TEMPLATES=\"\$HOME/.cms/templates\"" >> "$SHELL_RC"
+    echo "export ATO_TEMPLATES=\"\$HOME/.ato/templates\"" >> "$SHELL_RC"
     echo -e "${GREEN}✓${RESET} Added to $SHELL_RC"
   fi
 fi
 
 echo ""
-echo -e "${GREEN}✓ CMS installed!${RESET}"
+echo -e "${GREEN}✓ ato installed!${RESET}"
 echo ""
 echo "Run: source $SHELL_RC"
-echo "Then: cd your-project && cms init"
+echo "Then: cd your-project && ato init"
 echo ""
