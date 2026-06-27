@@ -1069,17 +1069,70 @@ cmd_scope() {
 }
 
 cmd_trim() {
-  header "CONTEXT.md audit"
+  header "CONTEXT.md — Token Budget"
   [[ ! -f "$CONTEXT_FILE" ]] && { error "No CONTEXT.md found"; exit 1; }
-  local issues=0 lines
-  lines=$(wc -l < "$CONTEXT_FILE")
-  [[ $lines -gt 200 ]] && { warn "$lines lines (target: <200)"; ((issues++)) || true; }
-  grep -q "TODO\|FIXME" "$CONTEXT_FILE" && { warn "TODOs found → move to TASKS.md"; ((issues++)) || true; }
-  grep -qP "^\s{0,4}(export|import|def |class |func )" "$CONTEXT_FILE" 2>/dev/null && \
-    { warn "Code found in CONTEXT.md → remove it, keep signatures only"; ((issues++)) || true; }
-  [[ $issues -eq 0 ]] && success "CONTEXT.md looks lean"
+
+  local total_lines total_tokens issues=0
+  total_lines=$(wc -l < "$CONTEXT_FILE" | tr -d ' ')
+  total_tokens=$(( total_lines * TOKENS_PER_LINE ))
+
+  # ── Per-section breakdown ──────────────────────────────────────────
   echo ""
-  dim "Rules: architecture tree only | no file contents | no history | <200 lines"
+  printf "  %-30s %5s  %6s  %s\n" "Section" "Lines" "Tokens" "Share"
+  echo "  ──────────────────────────────────────────────────────────"
+
+  local section_name="" section_lines=0
+  local warned_sections=()
+
+  _flush_section() {
+    [[ -z "$section_name" ]] && return
+    local tok=$(( section_lines * TOKENS_PER_LINE ))
+    local pct=0
+    [[ $total_tokens -gt 0 ]] && pct=$(( tok * 100 / total_tokens ))
+    local flag=""
+    if [[ $pct -ge 30 ]]; then flag="${YELLOW}← trim${RESET}"; warned_sections+=("$section_name ($pct%)"); fi
+    printf "  %-30s %5d  %6s  %3d%%  %b\n" \
+      "$section_name" "$section_lines" "~$(fmt_tokens $tok)" "$pct" "$flag"
+  }
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^##[[:space:]] ]]; then
+      _flush_section
+      section_name="${line#\#\# }"
+      section_lines=0
+    else
+      (( section_lines++ )) || true
+    fi
+  done < "$CONTEXT_FILE"
+  _flush_section
+
+  echo "  ──────────────────────────────────────────────────────────"
+  printf "  %-30s %5d  %6s\n" "Total" "$total_lines" "~$(fmt_tokens $total_tokens)"
+  echo ""
+
+  # ── Overall health ─────────────────────────────────────────────────
+  if [[ $total_lines -gt 200 ]]; then
+    warn "$total_lines lines — over target (<200). Run trim."
+    (( issues++ )) || true
+  else
+    success "$total_lines lines — within target (<200) ✓"
+  fi
+
+  for s in "${warned_sections[@]+"${warned_sections[@]}"}"; do
+    warn "Large section: $s — consider summarizing"
+    (( issues++ )) || true
+  done
+
+  grep -q "TODO\|FIXME" "$CONTEXT_FILE" && \
+    { warn "TODOs/FIXMEs found — move them to TASKS.md"; (( issues++ )) || true; }
+
+  grep -E "^\s{0,4}(export |import |def |class |func )" "$CONTEXT_FILE" 2>/dev/null | grep -q . && \
+    { warn "Code found — keep signatures only, remove bodies"; (( issues++ )) || true; }
+
+  echo ""
+  [[ $issues -eq 0 ]] && success "CONTEXT.md is lean — no action needed"
+  dim "  Target: <200 lines | no full code | no section >30% of total"
+  echo ""
 }
 
 cmd_prompt() {
