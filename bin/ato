@@ -588,14 +588,23 @@ cmd_sync() {
     { print }
     ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
 
-  # Update git history block in-place
+  # Update git history block in-place (use temp file to handle multi-line content)
+  local tmp_log
+  tmp_log=$(mktemp)
+  echo "$git_log_inline" > "$tmp_log"
   awk \
-    -v gitlog="$git_log_inline" \
+    -v logfile="$tmp_log" \
     '
-    /^## Recent git history/ { print; print gitlog; skip=1; next }
+    /^## Recent git history/ {
+      print
+      while ((getline line < logfile) > 0) print line
+      close(logfile)
+      skip=1; next
+    }
     skip && /^## /           { skip=0 }
     !skip                    { print }
     ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
+  rm -f "$tmp_log"
 
   success "CONTEXT.md synced — branch: $branch | $(date +%H:%M)"
   [[ -n "$changed" ]] && info "Files: $changed"
