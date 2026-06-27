@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-REPO="https://raw.githubusercontent.com/aarjang/cms/main"
+REPO="https://raw.githubusercontent.com/aarjang/cms-github/main"
 INSTALL_DIR="${CMS_INSTALL_DIR:-$HOME/bin}"
 TEMPLATES_DIR="$HOME/.cms/templates"
 
