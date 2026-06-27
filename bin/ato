@@ -131,15 +131,29 @@ estimate_session_tokens() {
 
 estimate_project_tokens() {
   local total session_est
-  total=$(find . \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" \
+
+  # Count lines in files with known code extensions
+  local ext_lines
+  ext_lines=$(find . \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" \
          -o -name "*.py" -o -name "*.go" -o -name "*.rs" \
          -o -name "*.sh" -o -name "*.bash" \) \
     2>/dev/null | \
     grep -v "node_modules\|\.git\|dist\|build\|\.next\|__pycache__" | \
     xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-  local estimated=$(( ${total:-0} * TOKENS_PER_LINE ))
+
+  # Count lines in executable files without extensions (e.g. bin/ato)
+  local exec_lines=0
+  while IFS= read -r f; do
+    head -1 "$f" 2>/dev/null | grep -q "^#!" && \
+      exec_lines=$(( exec_lines + $(wc -l < "$f" 2>/dev/null) )) || true
+  done < <(find . -type f ! -name "*.*" \
+    -not -path "*/.git/*" -not -path "*/node_modules/*" \
+    2>/dev/null)
+
+  total=$(( ${ext_lines:-0} + exec_lines ))
+  local estimated=$(( total * TOKENS_PER_LINE ))
   session_est=$(estimate_session_tokens)
-  # if detected total is less than session size, project has non-standard extensions
+
   if [[ "$estimated" -le "$session_est" ]]; then
     echo "$BASELINE_TOKENS"
   else
