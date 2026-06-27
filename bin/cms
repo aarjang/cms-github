@@ -39,7 +39,7 @@ dim()     { echo -e "${DIM}$*${RESET}"; }
 json_get() {
   local file="$1" key="$2"
   grep -o "\"$key\":[^,}]*" "$file" 2>/dev/null | \
-    head -1 | sed 's/"[^"]*":\s*//' | tr -d '"' || echo "0"
+    head -1 | sed 's/"[^"]*":[[:space:]]*//' | tr -d '"' | tr -d '[:space:]' || echo "0"
 }
 
 json_init_global() {
@@ -120,17 +120,17 @@ record_task_done() {
   if [[ -f "$LOCAL_STATS" ]]; then
     local prev
     prev=$(json_get "$LOCAL_STATS" "tasks_done")
-    local tmp
-    tmp=$(cat "$LOCAL_STATS")
-    echo "${tmp/\"tasks_done\": $prev/\"tasks_done\": $((prev + 1))}" > "$LOCAL_STATS"
+    awk -v old="$prev" -v new="$((prev + 1))" \
+      '{ gsub(/"tasks_done":[[:space:]]*[0-9]+/, "\"tasks_done\": " new) } 1' \
+      "$LOCAL_STATS" > "$LOCAL_STATS.tmp" && mv "$LOCAL_STATS.tmp" "$LOCAL_STATS"
   fi
 
   json_init_global
   local g_prev
   g_prev=$(json_get "$GLOBAL_STATS" "total_tasks_done")
-  local tmp
-  tmp=$(cat "$GLOBAL_STATS")
-  echo "${tmp/\"total_tasks_done\": $g_prev/\"total_tasks_done\": $((g_prev + 1))}" > "$GLOBAL_STATS"
+  awk -v old="$g_prev" -v new="$((g_prev + 1))" \
+    '{ gsub(/"total_tasks_done":[[:space:]]*[0-9]+/, "\"total_tasks_done\": " new) } 1' \
+    "$GLOBAL_STATS" > "$GLOBAL_STATS.tmp" && mv "$GLOBAL_STATS.tmp" "$GLOBAL_STATS"
 }
 
 estimate_session_tokens() {
