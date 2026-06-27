@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cms sync"
+            "command": "ato sync"
           }
         ]
       }
