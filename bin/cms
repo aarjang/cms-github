@@ -809,6 +809,46 @@ cmd_reset_stats() {
   fi
 }
 
+cmd_update() {
+  local repo="https://raw.githubusercontent.com/aarjang/cms-github/main"
+  local install_dir
+  install_dir="$(dirname "$(command -v cms 2>/dev/null || echo "$HOME/bin/cms")")"
+  local bin="$install_dir/cms"
+  local templates_dir="$HOME/.cms/templates"
+
+  info "Current version: v$VERSION"
+  info "Downloading latest cms..."
+
+  local tmp
+  tmp=$(mktemp)
+  if curl -fsSL "$repo/bin/cms" -o "$tmp" 2>/dev/null; then
+    local new_version
+    new_version=$(grep '^VERSION=' "$tmp" | head -1 | tr -d '"' | sed 's/VERSION=//')
+    if [[ "$new_version" == "$VERSION" ]]; then
+      rm -f "$tmp"
+      success "Already up to date (v$VERSION)"
+      return
+    fi
+    chmod +x "$tmp"
+    mv "$tmp" "$bin"
+    success "Updated: v$VERSION → v$new_version"
+  else
+    rm -f "$tmp"
+    error "Download failed — check your connection"
+    exit 1
+  fi
+
+  info "Updating templates..."
+  mkdir -p "$templates_dir"
+  for file in TASKS.md DECISIONS.md CLAUDE.md; do
+    curl -fsSL "$repo/templates/$file" -o "$templates_dir/$file" 2>/dev/null && \
+      success "Updated template: $file" || warn "Could not update $file"
+  done
+
+  echo ""
+  success "cms is up to date. Run: cms help"
+}
+
 # ─── Minimal file creator (fallback: no templates dir) ────────────────
 _create_minimal() {
   local file="$1" project="$2"
@@ -873,6 +913,7 @@ cmd_help() {
   echo "  scope <pattern>      Estimate token cost of a file set"
   echo "  trim                 Audit CONTEXT.md for bloat"
   echo "  prompt               Print optimal Claude Code session starter"
+  echo "  update               Update cms + templates to latest version"
   echo "  reset-stats [global] Reset stats (local by default)"
   echo "  help                 Show this help"
   echo ""
@@ -906,6 +947,7 @@ main() {
     scope)          cmd_scope "$@" ;;
     trim)           cmd_trim "$@" ;;
     prompt)         cmd_prompt ;;
+    update)         cmd_update ;;
     reset-stats)    cmd_reset_stats "$@" ;;
     help|-h|--help) cmd_help ;;
     *)
