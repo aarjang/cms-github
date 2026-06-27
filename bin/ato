@@ -691,7 +691,7 @@ cmd_sync() {
   today=$(date +%Y-%m-%d)
 
   changed=$(git status --short 2>/dev/null | awk '{print $NF}' | sort -u | \
-    grep -v "^$" | head -8 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    grep -v "^$" | head -8 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)
 
   local git_log_inline
   git_log_inline=$(git log --oneline -5 --format="  %h %s (%ar)" 2>/dev/null || echo "  [no history]")
@@ -727,8 +727,16 @@ cmd_sync() {
     ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
   rm -f "$tmp_log"
 
+  local session_tokens full_tokens saved
+  session_tokens=$(estimate_session_tokens)
+  full_tokens=$(estimate_project_tokens)
+  saved=$(( full_tokens - session_tokens ))
+  [[ $saved -lt 0 ]] && saved=0
+  record_session "$saved"
+
   success "CONTEXT.md synced — branch: $branch | $(date +%H:%M)"
   [[ -n "$changed" ]] && info "Files: $changed"
+  info "Saved ~$(fmt_tokens $saved) tokens this session"
 }
 
 cmd_add() {
