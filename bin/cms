@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="2.0.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -221,6 +221,114 @@ _detect_description() {
   echo "[one sentence: what this project does]"
 }
 
+_detect_test_cmd() {
+  if [[ -f "package.json" ]]; then
+    grep -q '"test"'   package.json 2>/dev/null && echo "npm test"        && return
+    grep -q '"vitest"' package.json 2>/dev/null && echo "npx vitest"      && return
+  fi
+  [[ -f "pytest.ini" || -f "conftest.py" ]] && echo "pytest"             && return
+  [[ -f "go.mod" ]]                          && echo "go test ./..."      && return
+  [[ -f "Cargo.toml" ]]                      && echo "cargo test"         && return
+  [[ -f "Makefile" ]] && grep -q "^test:" Makefile 2>/dev/null && echo "make test" && return
+  echo "[none detected]"
+}
+
+_detect_build_cmd() {
+  if [[ -f "package.json" ]]; then
+    grep -q '"build"' package.json 2>/dev/null && echo "npm run build" && return
+  fi
+  [[ -f "go.mod" ]]    && echo "go build ./..."       && return
+  [[ -f "Cargo.toml" ]] && echo "cargo build --release" && return
+  [[ -f "Makefile" ]] && grep -q "^build:" Makefile 2>/dev/null && echo "make build" && return
+  echo "[none detected]"
+}
+
+_detect_lint_cmd() {
+  if [[ -f "package.json" ]]; then
+    grep -q '"lint"'  package.json 2>/dev/null && echo "npm run lint"  && return
+    grep -q '"check"' package.json 2>/dev/null && echo "npm run check" && return
+  fi
+  [[ -f ".flake8" || -f "setup.cfg" ]]         && echo "flake8 ."         && return
+  [[ -f ".golangci.yml" || -f "golangci-lint.yml" ]] && echo "golangci-lint run" && return
+  echo "[none detected]"
+}
+
+_detect_key_deps() {
+  if [[ -f "package.json" ]]; then
+    grep -E '^\s+"[^"]+": "[^"]*"' package.json 2>/dev/null | \
+      grep -v '"name"\|"version"\|"description"\|"main"\|"license"\|"author"\|"private"\|"type"\|"module"' | \
+      sed 's/.*"\([^"]*\)":[[:space:]]*"\([^"]*\)".*/  \1: \2/' | \
+      grep -v "^[[:space:]]*$" | head -14
+    return
+  fi
+  if [[ -f "requirements.txt" ]]; then
+    grep -v "^#\|^$" requirements.txt | head -12 | sed 's/^/  /'
+    return
+  fi
+  if [[ -f "go.mod" ]]; then
+    awk '/^require/,/^\)/' go.mod 2>/dev/null | grep -v "^require\|^\)\|^$" | \
+      awk '{print "  " $1 " " $2}' | head -10
+    return
+  fi
+  if [[ -f "Cargo.toml" ]]; then
+    awk '/^\[dependencies\]/,/^\[/' Cargo.toml 2>/dev/null | \
+      grep -v "^\[" | grep -v "^$" | head -10 | sed 's/^/  /'
+    return
+  fi
+  echo "  [none detected]"
+}
+
+_detect_env_vars() {
+  for f in .env.example .env.sample .env.template .env.test; do
+    if [[ -f "$f" ]]; then
+      grep -E '^[A-Z_]+=?' "$f" 2>/dev/null | \
+        awk -F= '{print "  " $1 "=<value>"}' | head -15
+      return
+    fi
+  done
+  local found
+  found=$(grep -rh "process\.env\." --include="*.ts" --include="*.js" \
+    --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null | \
+    grep -oE 'process\.env\.[A-Z_]+' | sed 's/process\.env\.//' | \
+    sort -u | head -12 | awk '{print "  " $0 "=<value>"}')
+  [[ -n "$found" ]] && echo "$found" && return
+  echo "  [none detected — add .env.example to document these]"
+}
+
+_detect_conventions() {
+  local parts=()
+  [[ -f "tsconfig.json" ]] && \
+    grep -q '"strict"[[:space:]]*:[[:space:]]*true' tsconfig.json 2>/dev/null && \
+    parts+=("TypeScript strict")
+  for f in .eslintrc .eslintrc.js .eslintrc.json .eslintrc.yml eslint.config.js eslint.config.mjs; do
+    [[ -f "$f" ]] && parts+=("ESLint") && break
+  done
+  for f in .prettierrc .prettierrc.json .prettierrc.js prettier.config.js; do
+    [[ -f "$f" ]] && parts+=("Prettier") && break
+  done
+  [[ -f ".editorconfig" ]] && parts+=("EditorConfig")
+  for f in jest.config.js jest.config.ts jest.config.mjs; do
+    [[ -f "$f" ]] && parts+=("Jest") && break
+  done
+  for f in vitest.config.ts vitest.config.js; do
+    [[ -f "$f" ]] && parts+=("Vitest") && break
+  done
+  [[ -d ".github/workflows" ]] && parts+=("GitHub Actions")
+  [[ -f "docker-compose.yml" || -f "docker-compose.yaml" ]] && parts+=("Docker Compose")
+  [[ ${#parts[@]} -eq 0 ]] && echo "  [none detected]" && return
+  local IFS=', '
+  echo "  ${parts[*]}"
+}
+
+_make_bar() {
+  local filled="$1" total="$2" bar=""
+  local i
+  for ((i=0; i<total; i++)); do
+    if ((i < filled)); then bar+="█"; else bar+="░"; fi
+  done
+  echo "$bar"
+}
+
 _generate_tree() {
   # Single find sorted naturally so dirs appear before their children
   find . -mindepth 1 -maxdepth 3 \
@@ -248,51 +356,76 @@ _generate_tree() {
 
 _auto_fill_context() {
   local project="$1"
-  local stack entry run_cmd description branch tree
+  local stack entry run_cmd test_cmd build_cmd lint_cmd description branch tree
+  local key_deps env_vars conventions git_log
 
   info "Scanning project..."
+  description=$(_detect_description)
   stack=$(_detect_stack)
   entry=$(_detect_entry)
   run_cmd=$(_detect_run_cmd)
-  description=$(_detect_description)
+  test_cmd=$(_detect_test_cmd)
+  build_cmd=$(_detect_build_cmd)
+  lint_cmd=$(_detect_lint_cmd)
+  key_deps=$(_detect_key_deps)
+  env_vars=$(_detect_env_vars)
+  conventions=$(_detect_conventions)
   branch=$(git branch --show-current 2>/dev/null || echo "main")
   tree=$(_generate_tree)
+  git_log=$(git log --oneline -5 --format="  %h %s (%ar)" 2>/dev/null || echo "  [no git history yet]")
 
   cat > "$CONTEXT_FILE" << EOF
 # PROJECT CONTEXT — $project
-<!-- Auto-generated by cms init on $(date +%Y-%m-%d). Edit freely. Keep under 200 lines. -->
-<!-- Run: cms sync  — refreshes Branch, Active scope, and Recently changed after each session -->
+<!-- Generated: $(date +%Y-%m-%d) by cms v${VERSION} -->
+<!-- Updated automatically by stop-hook → cms sync after each session -->
+<!-- Claude: read this FULLY before responding. Do NOT scan the full codebase. -->
 
-## TL;DR
+## Identity
 $description
 
-Stack: $stack
-Entry: $entry
-Branch: $branch
-Last updated: $(date +%Y-%m-%d)
+Stack:   $stack
+Entry:   $entry
+Branch:  $branch
 
-## Architecture
+## Commands
+\`\`\`bash
+run:   $run_cmd
+test:  $test_cmd
+build: $build_cmd
+lint:  $lint_cmd
 \`\`\`
+
+## Structure
+\`\`\`
+$project/
 $tree
 \`\`\`
 
-## Contracts
-[env var names, key interfaces, db tables, API routes — signatures only, no code blocks]
+## Key dependencies
+$key_deps
+
+## Environment variables
+$env_vars
+
+## Conventions
+$conventions
+
+## Recent git history
+$git_log
 
 ## Anti-patterns
-- ❌ [never do this] — because [reason]
+<!-- Fill in as you discover footguns in this codebase — Claude will respect them -->
+- [none yet — add constraints here after your first session]
 
-## Run locally
-\`\`\`bash
-$run_cmd
-\`\`\`
-
-## Active scope
-Current focus: [updated by cms sync]
-Recently changed: [updated by cms sync]
-<!-- Claude: read TASKS.md for current task -->
+## Session notes
+<!-- Auto-updated by cms sync -->
+Last session: [none yet]
+Changed:      [none yet]
 EOF
-  success "CONTEXT.md auto-generated from project scan"
+
+  local final_lines
+  final_lines=$(wc -l < "$CONTEXT_FILE")
+  success "CONTEXT.md generated ($final_lines lines — $(( final_lines * TOKENS_PER_LINE )) est. tokens)"
 }
 
 # ─── Hook setup ───────────────────────────────────────────────────────
@@ -385,31 +518,28 @@ _pick_task() {
 
 cmd_init() {
   local project="${1:-$(basename "$PWD")}"
-  header "Initializing CMS — $project"
+  header "Initializing CMS v${VERSION} — $project"
 
-  # CONTEXT.md: always auto-generate (scan beats generic template)
+  # CONTEXT.md
   if [[ -f "$CONTEXT_FILE" ]]; then
     warn "$CONTEXT_FILE already exists — skipping (run: cms sync to refresh)"
   else
     _auto_fill_context "$project"
   fi
 
-  # Other files: template or minimal
-  for file in "$TASKS_FILE" "$DECISIONS_FILE" "$CLAUDE_FILE"; do
-    if [[ -f "$file" ]]; then
-      warn "$file already exists — skipping"
+  # CLAUDE.md
+  if [[ -f "$CLAUDE_FILE" ]]; then
+    warn "$CLAUDE_FILE already exists — skipping"
+  else
+    local tmpl="$TEMPLATES_DIR/$CLAUDE_FILE"
+    if [[ -f "$tmpl" ]]; then
+      cp "$tmpl" "$CLAUDE_FILE"
+      sed -i.bak "s/\[PROJECT_NAME\]/$project/g" "$CLAUDE_FILE" && rm -f "$CLAUDE_FILE.bak"
     else
-      local tmpl="$TEMPLATES_DIR/$file"
-      if [[ -f "$tmpl" ]]; then
-        cp "$tmpl" "$file"
-        sed -i.bak "s/\[PROJECT_NAME\]/$project/g" "$file" && rm -f "$file.bak"
-        sed -i.bak "s/\[DATE\]/$(date +%Y-%m-%d)/g"  "$file" && rm -f "$file.bak"
-      else
-        _create_minimal "$file" "$project"
-      fi
-      success "Created $file"
+      _create_minimal "$CLAUDE_FILE" "$project"
     fi
-  done
+    success "Created $CLAUDE_FILE"
+  fi
 
   json_init_local "$project"
   json_init_global
@@ -419,32 +549,16 @@ cmd_init() {
     printf '\n# CMS stats\n.cms-stats.json\n' >> .gitignore
   fi
 
-  # Install Claude Code auto-sync hook
   _setup_hook
 
-  # First-task wizard (interactive terminals only)
-  local first_task=""
-  if ( : </dev/tty ) 2>/dev/null; then
-    echo ""
-    printf "  ${BOLD}What are you working on right now?${RESET} ${DIM}(Enter to skip)${RESET}\n"
-    printf "  > "
-    read -r first_task </dev/tty 2>/dev/null || first_task=""
-  fi
-  if [[ -n "$first_task" ]]; then
-    cmd_add "$first_task"
-    echo ""
-    echo -e "  ${GREEN}✓ You're ready!${RESET} Start your first session:"
-    echo ""
-    echo -e "      ${BOLD}cms focus 1${RESET}"
-    echo ""
-    return
-  fi
-
   echo ""
-  info "Next steps:"
-  dim "  1. Review CONTEXT.md — fill in Contracts + Anti-patterns"
-  dim "  2. cms add \"your first task\""
-  dim "  3. cms focus 1"
+  echo -e "  ${GREEN}${BOLD}✓ Done!${RESET}"
+  echo ""
+  echo -e "  ${BOLD}Next steps:${RESET}"
+  dim "  1. Review CONTEXT.md — fill in Anti-patterns + any missing info"
+  dim "  2. Run: claude"
+  dim "     Claude reads CONTEXT.md automatically and asks what to work on"
+  dim "  3. After each session, CONTEXT.md is updated automatically"
   echo ""
 }
 
@@ -455,33 +569,36 @@ cmd_sync() {
   branch=$(git branch --show-current 2>/dev/null || echo "main")
   today=$(date +%Y-%m-%d)
 
-  # Files changed since last commit (working tree + staged + untracked)
   changed=$(git status --short 2>/dev/null | awk '{print $NF}' | sort -u | \
     grep -v "^$" | head -8 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 
-  # Update tracked fields in-place (cross-platform: awk + tmp file)
+  local git_log_inline
+  git_log_inline=$(git log --oneline -5 --format="  %h %s (%ar)" 2>/dev/null || echo "  [no history]")
+
   awk \
     -v branch="$branch" \
     -v today="$today" \
-    -v changed="$changed" \
+    -v changed="${changed:-nothing modified}" \
     '
-    /^Branch: /          { print "Branch: " branch; next }
-    /^Last updated: /    { print "Last updated: " today; next }
-    /^Current focus: /   {
-      if (changed != "") print "Current focus: `" changed "`"
-      else print $0
-      next
-    }
-    /^Recently changed: / {
-      if (changed != "") print "Recently changed: " changed
-      else print $0
-      next
-    }
+    /^Branch: /           { print "Branch:  " branch; next }
+    /^Last session: /     { print "Last session: " today; next }
+    /^Changed: /          { print "Changed:      " changed; next }
+    /^Current focus: /    { print "Current focus: `" changed "`"; next }
+    /^Recently changed: / { print "Recently changed: " changed; next }
     { print }
     ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
 
+  # Update git history block in-place
+  awk \
+    -v log="$git_log_inline" \
+    '
+    /^## Recent git history/ { print; print log; skip=1; next }
+    skip && /^## /           { skip=0 }
+    !skip                    { print }
+    ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
+
   success "CONTEXT.md synced — branch: $branch | $(date +%H:%M)"
-  [[ -n "$changed" ]] && info "Active files: $changed"
+  [[ -n "$changed" ]] && info "Files: $changed"
 }
 
 cmd_add() {
@@ -711,45 +828,106 @@ cmd_stats() {
 cmd_status() {
   local project
   project="$(basename "$PWD")"
-  header "CMS Status — $project"
+  local W=50   # box width (inner)
 
   echo ""
+  # ── Header ──────────────────────────────────────────────────
+  local title="  CMS v${VERSION} — ${project}"
+  printf "${BOLD}╔%${W}s╗${RESET}\n" | tr ' ' '═'
+  printf "${BOLD}║${RESET}%-${W}s${BOLD}║${RESET}\n" "$title"
+  printf "${BOLD}╚%${W}s╝${RESET}\n" | tr ' ' '═'
+  echo ""
+
+  # ── Files ───────────────────────────────────────────────────
+  echo -e "  ${BOLD}Files${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+
   if [[ -f "$CONTEXT_FILE" ]]; then
-    local lines tokens
+    local lines tokens health_tag
     lines=$(wc -l < "$CONTEXT_FILE")
     tokens=$(( lines * TOKENS_PER_LINE ))
     if [[ $lines -gt 200 ]]; then
-      warn "CONTEXT.md: $lines lines (~$(fmt_tokens $tokens) tokens) — too large, run: cms trim"
+      health_tag="${YELLOW}⚠ too large — run: cms trim${RESET}"
     else
-      success "CONTEXT.md: $lines lines (~$(fmt_tokens $tokens) tokens) ✓"
+      health_tag="${GREEN}lean ✓${RESET}"
     fi
+    printf "  ${GREEN}✓${RESET}  %-18s %3d lines  (~%-5s tokens)  " "CONTEXT.md" "$lines" "$(fmt_tokens $tokens)"
+    echo -e "$health_tag"
   else
-    error "CONTEXT.md missing — run: cms init"
+    echo -e "  ${RED}✗${RESET}  CONTEXT.md          ${RED}missing — run: cms init${RESET}"
   fi
 
-  if [[ -f "$TASKS_FILE" ]]; then
-    local blocked=0 ip=0 next_count=0
-    blocked=$(grep "^| [0-9]" "$TASKS_FILE" 2>/dev/null | grep -c "| blocked |"     || true)
-    ip=$(grep "^| [0-9]" "$TASKS_FILE" 2>/dev/null       | grep -c "| in-progress |" || true)
-    next_count=$(grep "^| [0-9]" "$TASKS_FILE" 2>/dev/null | grep -c "| up-next |"   || true)
-    local old_b old_p old_n
-    old_b=$(grep -c "^| B-" "$TASKS_FILE" 2>/dev/null || true)
-    old_p=$(grep -c "^| P-" "$TASKS_FILE" 2>/dev/null || true)
-    old_n=$(grep -c "^| N-" "$TASKS_FILE" 2>/dev/null || true)
-    echo -e "  Tasks: 🔴 $((blocked+old_b)) blocked  🟡 $((ip+old_p)) in progress  🟢 $((next_count+old_n)) up next"
+  if [[ -f "$CLAUDE_FILE" ]]; then
+    printf "  ${GREEN}✓${RESET}  %-18s %s\n" "CLAUDE.md" "present"
+  else
+    printf "  ${YELLOW}!${RESET}  %-18s %s\n" "CLAUDE.md" "missing"
   fi
 
+  if [[ -f ".claude/settings.json" ]] && grep -q "cms sync" .claude/settings.json 2>/dev/null; then
+    printf "  ${GREEN}✓${RESET}  %-18s %s\n" "Stop-hook" "installed  (auto-sync active)"
+  else
+    printf "  ${YELLOW}!${RESET}  %-18s %s\n" "Stop-hook" "not set — run: cms init"
+  fi
   echo ""
+
+  # ── Token budget ────────────────────────────────────────────
+  echo -e "  ${BOLD}Token budget${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+
   local session_tokens full_tokens pct=0
   session_tokens=$(estimate_session_tokens)
   full_tokens=$(estimate_project_tokens)
   [[ $full_tokens -gt 0 ]] && pct=$(( (full_tokens - session_tokens) * 100 / full_tokens ))
 
-  echo -e "  Without CMS : ~$(fmt_tokens $full_tokens) tokens/session"
-  echo -e "  With CMS    : ~$(fmt_tokens $session_tokens) tokens/session"
-  echo -e "  ${GREEN}Saving      : ~${pct}% per session${RESET}"
+  local bar_len=22
+  local filled=$(( bar_len * session_tokens / (full_tokens > 0 ? full_tokens : 1) ))
+  [[ $filled -gt $bar_len ]] && filled=$bar_len
+  local bar_full bar_cms
+  bar_full=$(_make_bar $bar_len $bar_len)
+  bar_cms=$(_make_bar $filled $bar_len)
 
-  cmd_stats "local"
+  printf "  %-14s  %s  ~%s\n" "Without CMS"  "$bar_full" "$(fmt_tokens $full_tokens) tokens"
+  printf "  %-14s  %s  ~%s\n" "With CMS"     "$bar_cms"  "$(fmt_tokens $session_tokens) tokens"
+  echo -e "  ${GREEN}Saving ~${pct}% per session${RESET}"
+  echo ""
+
+  # ── Git ─────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Git${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+
+  local git_branch git_state git_last
+  git_branch=$(git branch --show-current 2>/dev/null || echo "n/a")
+
+  local mod unt
+  mod=$(git status --short 2>/dev/null | grep -c "^[MADRCU ]" || true); mod=${mod:-0}
+  unt=$(git status --short 2>/dev/null | grep -c '^??' || true); unt=${unt:-0}
+  if [[ $mod -eq 0 && $unt -eq 0 ]]; then
+    git_state="${GREEN}clean${RESET}"
+  else
+    git_state="${mod} modified, ${unt} untracked"
+  fi
+  git_last=$(git log --oneline -1 --format='"%s" (%ar)' 2>/dev/null || echo "n/a")
+
+  printf "  %-14s  %s\n"     "Branch"      "$git_branch"
+  printf "  %-14s  "         "Status"
+  echo -e "$git_state"
+  printf "  %-14s  %s\n"     "Last commit" "$git_last"
+  echo ""
+
+  # ── Project stats ───────────────────────────────────────────
+  if [[ -f "$LOCAL_STATS" ]]; then
+    local sessions tokens_saved last_s
+    sessions=$(json_get "$LOCAL_STATS" "sessions")
+    tokens_saved=$(json_get "$LOCAL_STATS" "tokens_saved")
+    last_s=$(json_get "$LOCAL_STATS" "last_session" | cut -c1-10)
+
+    echo -e "  ${BOLD}This project${RESET}"
+    printf "  %s\n" "$(printf '─%.0s' {1..46})"
+    printf "  %-14s  %s\n" "Sessions"     "$sessions"
+    printf "  %-14s  ~%s tokens total\n" "Saved" "$(fmt_tokens $tokens_saved)"
+    printf "  %-14s  %s\n" "Last session" "${last_s:-none}"
+    echo ""
+  fi
 }
 
 cmd_scope() {
@@ -787,17 +965,16 @@ cmd_trim() {
 
 cmd_prompt() {
   echo ""
-  echo "─────────────────────────────────────────────"
-  echo "Paste as first message in Claude Code:"
-  echo "─────────────────────────────────────────────"
+  echo -e "${BOLD}  ─────────────────────────────────────────────${RESET}"
+  echo -e "${BOLD}  Paste as first message in Claude Code:${RESET}"
+  echo -e "${BOLD}  ─────────────────────────────────────────────${RESET}"
   echo ""
-  echo "Read CONTEXT.md fully."
-  echo "Then read ONLY the current task section in TASKS.md."
-  echo "Do NOT read any other files."
-  echo "Tell me: which task, which files you'll touch."
-  echo "Wait for my confirmation before writing code."
+  echo "  Read CONTEXT.md fully, then say:"
+  echo "  \"Ready. What are we working on today?\""
   echo ""
-  echo "─────────────────────────────────────────────"
+  echo -e "${BOLD}  ─────────────────────────────────────────────${RESET}"
+  echo ""
+  dim "  (Claude Code with CLAUDE.md does this automatically on startup)"
 }
 
 cmd_reset_stats() {
@@ -877,20 +1054,23 @@ EOF
 EOF
     ;;
     "CLAUDE.md") cat > "$file" << EOF
-# CLAUDE.md
-<!-- Claude Code reads this automatically every session -->
+# CLAUDE.md — $project
+<!-- Claude Code reads this automatically at the start of every session -->
 
-## Startup
-1. Read CONTEXT.md fully
-2. Read current task section in TASKS.md only
-3. Say: "Working on task [#]: [name]. Will touch: [files]."
-4. Wait for confirmation before writing code
+## On startup
+1. Read \`CONTEXT.md\` fully — it is the complete map of this project
+2. Say exactly: "Ready. What are we working on today?"
+3. Wait for the user's answer before doing anything else
 
-## Rules
-- Only read files listed in the current task scope
-- Ask before exploring anything outside that list
-- No code before scope is confirmed
-- When done: update checkboxes in TASKS.md + report DONE/BLOCKED
+## Working rules
+- Only read files relevant to what the user asks for
+- Do not scan or explore the codebase unprompted
+- Ask before reading anything outside the stated scope
+- When done: tell the user what changed in one sentence
+
+## Context stays current automatically
+A stop-hook runs \`cms sync\` after every session — CONTEXT.md is kept up to date.
+You do not need to remind the user to update it.
 EOF
     ;;
   esac
@@ -900,36 +1080,36 @@ EOF
 cmd_help() {
   echo ""
   echo -e "${BOLD}cms v${VERSION}${RESET} — Context Management System for Claude Code"
-  echo -e "${DIM}Reduce token usage by 70-90% per session${RESET}"
+  echo -e "${DIM}Reduce token usage 70-90% per session. No task system. Just context.${RESET}"
+  echo ""
+  echo -e "${BOLD}WORKFLOW${RESET}"
+  echo ""
+  echo -e "  ${CYAN}1.${RESET}  cms init          Scan project → generate CONTEXT.md + CLAUDE.md"
+  echo -e "  ${CYAN}2.${RESET}  claude            Enter Claude Code — it reads CONTEXT.md and asks"
+  echo -e "                    \"What are we working on today?\""
+  echo -e "  ${CYAN}3.${RESET}  Work freely       No tasks. No scope. Just talk to Claude."
+  echo -e "  ${CYAN}4.${RESET}  Session ends      Stop-hook runs cms sync → CONTEXT.md updated"
   echo ""
   echo -e "${BOLD}COMMANDS${RESET}"
-  echo "  init [name]          Scan project + create CMS files + first-task wizard"
-  echo "  sync                 Refresh CONTEXT.md (branch, active files, timestamp)"
-  echo "  add \"task\"           Add a task without touching any files"
-  echo "  focus [number]       Start focused session (interactive list if no number)"
-  echo "  done <number>        Mark task done + archive + auto-sync"
-  echo "  stats [local|global] Show token savings"
-  echo "  status               Project health + quick stats"
-  echo "  scope <pattern>      Estimate token cost of a file set"
-  echo "  trim                 Audit CONTEXT.md for bloat"
-  echo "  prompt               Print optimal Claude Code session starter"
+  echo "  init [name]          Scan project → generate CONTEXT.md + CLAUDE.md"
+  echo "  sync                 Refresh CONTEXT.md (branch, changed files, git log)"
+  echo "  status               Project health, token budget, git state, stats"
+  echo "  stats [local|global] Token savings breakdown"
+  echo "  scope <pattern>      Estimate token cost of a file set (e.g. '*.ts')"
+  echo "  trim                 Audit CONTEXT.md for bloat (target: <200 lines)"
+  echo "  prompt               Print the optimal Claude Code session starter"
   echo "  update               Update cms + templates to latest version"
-  echo "  reset-stats [global] Reset stats (local by default)"
+  echo "  reset-stats [global] Reset stats counters"
   echo "  help                 Show this help"
   echo ""
-  echo -e "${BOLD}DAILY WORKFLOW${RESET}"
-  echo "  cms focus            → pick a task (interactive list)"
-  echo "  cms focus 1          → jump straight to task 1"
-  echo "  cms done 1           → task complete, CONTEXT.md auto-synced"
-  echo "  cms stats            → see your token savings"
-  echo ""
-  echo -e "${BOLD}FIRST TIME IN A PROJECT${RESET}"
-  echo "  cms init             → scans project, asks what you're working on"
-  echo "  cms focus 1          → start your first session"
+  echo -e "${BOLD}ALSO AVAILABLE (optional task tracking)${RESET}"
+  echo "  add \"task\"           Add a task to TASKS.md"
+  echo "  focus [number]       Start a scoped session for a specific task"
+  echo "  done <number>        Mark task done + archive"
   echo ""
   echo -e "${BOLD}AUTO-SYNC${RESET}"
-  echo "  cms init installs a Claude Code stop-hook that runs cms sync"
-  echo "  automatically after every session. No manual step needed."
+  echo "  cms init installs a Claude Code stop-hook → cms sync runs after every"
+  echo "  session automatically. CONTEXT.md always reflects the latest state."
   echo ""
 }
 
