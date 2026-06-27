@@ -537,6 +537,78 @@ _pick_task() {
   cmd_focus "$choice"
 }
 
+_topic_focus() {
+  local topic="$1"
+  [[ ! -f "$CONTEXT_FILE" ]] && { error "CONTEXT.md not found — run: ato init"; exit 1; }
+
+  # Files with topic in their path
+  local path_files commit_files topic_files
+  path_files=$(git ls-files 2>/dev/null | grep -i "$topic" | head -5 || true)
+
+  # Files from commits mentioning the topic
+  commit_files=$(git log --all --oneline --grep="$topic" -i --name-only --format="" 2>/dev/null | \
+    grep -v "^$\|CONTEXT\.md\|CLAUDE\.md\|\.lock$\|\.ato-stats" | \
+    sort | uniq -c | sort -rn | awk '{print $2}' | head -8 || true)
+
+  topic_files=$(printf "%s\n%s" "$path_files" "$commit_files" | \
+    grep -v "^$" | awk '!seen[$0]++' | head -8 || true)
+
+  if [[ -z "$topic_files" ]]; then
+    warn "No files found related to: $topic"
+    info "Try: ato focus (auto-detect) or ato focus <task-id>"
+    return
+  fi
+
+  local focused=".ato_focus_auto.md"
+  {
+    echo "# Claude Code — Topic Focus: $topic"
+    echo "# $(date +%Y-%m-%d\ %H:%M)"
+    echo ""
+    echo "## Context (read this first):"
+    cat "$CONTEXT_FILE"
+    echo ""
+    echo "---"
+    echo "## Topic: $topic"
+    echo ""
+    echo "Focus ONLY on these files (related to: $topic):"
+    echo ""
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      if [[ -f "$f" ]]; then
+        local lines
+        lines=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+        echo "  - \`$f\`  ($lines lines)"
+      else
+        echo "  - \`$f\`"
+      fi
+    done <<< "$topic_files"
+    echo ""
+    echo "### Recent commits related to $topic:"
+    git log --oneline --grep="$topic" -i 2>/dev/null | head -5 | awk '{print "  " $0}' || echo "  [none]"
+    echo ""
+    echo "---"
+    echo "## Session rules:"
+    echo "1. Only read files listed above — do NOT explore the rest of the codebase"
+    echo "2. Ask before touching any file not in scope"
+    echo "3. Keep changes minimal and targeted"
+    echo "4. When done: report DONE + one-line summary"
+  } > "$focused"
+
+  record_session 0
+
+  success "Focused on topic: $topic"
+  echo ""
+  info "Files in scope:"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && dim "    $f"
+  done <<< "$topic_files"
+  echo ""
+  info "Paste into Claude Code:"
+  echo ""
+  echo -e "${BOLD}    Read $focused and follow the session rules inside it.${RESET}"
+  echo ""
+}
+
 _auto_focus() {
   [[ ! -f "$CONTEXT_FILE" ]] && { error "CONTEXT.md not found — run: ato init"; exit 1; }
 
@@ -683,8 +755,13 @@ cmd_init() {
   echo ""
 }
 
+_file_checksum() { cksum "$1" 2>/dev/null | awk '{print $1}'; }
+
 cmd_sync() {
   [[ ! -f "$CONTEXT_FILE" ]] && { error "CONTEXT.md not found — run: ato init"; exit 1; }
+
+  local checksum_before
+  checksum_before=$(_file_checksum "$CONTEXT_FILE")
 
   local branch today changed
   branch=$(git branch --show-current 2>/dev/null || echo "main")
@@ -734,8 +811,15 @@ cmd_sync() {
   [[ $saved -lt 0 ]] && saved=0
   record_session "$saved"
 
-  success "CONTEXT.md synced — branch: $branch | $(date +%H:%M)"
-  [[ -n "$changed" ]] && info "Files: $changed"
+  local checksum_after
+  checksum_after=$(_file_checksum "$CONTEXT_FILE")
+
+  if [[ "$checksum_before" == "$checksum_after" ]]; then
+    info "CONTEXT.md unchanged — nothing to sync"
+  else
+    success "CONTEXT.md synced — branch: $branch | $(date +%H:%M)"
+    [[ -n "$changed" ]] && info "Files: $changed"
+  fi
   info "Saved ~$(fmt_tokens $saved) tokens this session"
 }
 
@@ -787,6 +871,16 @@ cmd_focus() {
   if [[ -z "$task_id" ]]; then
     _auto_focus
     return
+  fi
+
+  # numeric → task by ID; non-numeric → check TASKS.md, else topic focus
+  if [[ ! "$task_id" =~ ^[0-9]+$ ]]; then
+    local in_tasks
+    in_tasks=$(grep -c "^### ${task_id}:" "$TASKS_FILE" 2>/dev/null || true)
+    if [[ "${in_tasks:-0}" -eq 0 ]]; then
+      _topic_focus "$task_id"
+      return
+    fi
   fi
 
   local task_label="$task_id"

@@ -79,7 +79,7 @@ ato update
 ---
 
 ## Active work area
-Current focus: `.ato_focus_auto.md CONTEXT.md`
+Current focus: `CONTEXT.md`
 Files in scope for current task:
 - `bin/ato` — اسکریپت اصلی، همه commands اینجاست
 - `bin/cms` — migration shim از cms به ato
