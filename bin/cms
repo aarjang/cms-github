@@ -218,7 +218,7 @@ $(cat "$CONTEXT_FILE" 2>/dev/null || echo "⚠ CONTEXT.md not found — run cms 
 ---
 ## Your task:
 $(grep -A 30 "### $task_id:" "$TASKS_FILE" 2>/dev/null | \
-  sed '/^### [A-Z]/{ /### '"$task_id"':/!q }' || \
+  awk '/^### [A-Z]/ && !/^### '"$task_id"':/ { exit } { print }' || \
   echo "Task $task_id not found in TASKS.md")
 
 ---
