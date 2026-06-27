@@ -1119,10 +1119,22 @@ cmd_update() {
   tmp=$(mktemp)
   if curl -fsSL "$repo/bin/ato" -o "$tmp" 2>/dev/null; then
     local new_version
-    new_version=$(grep '^VERSION=' "$tmp" | head -1 | tr -d '"' | sed 's/VERSION=//')
+    new_version=$(grep '^VERSION=' "$tmp" 2>/dev/null | head -1 | tr -d '"' | sed 's/VERSION=//' || echo "")
     if [[ "$new_version" == "$VERSION" ]]; then
       rm -f "$tmp"
       success "Already up to date (v$VERSION)"
+      return
+    fi
+    # Only install if remote version is strictly newer (avoid accidental downgrade)
+    local cur_major cur_minor cur_patch new_major new_minor new_patch
+    IFS='.' read -r cur_major cur_minor cur_patch <<< "$VERSION"
+    IFS='.' read -r new_major new_minor new_patch <<< "$new_version"
+    if [[ -z "$new_version" ]] || \
+       (( new_major < cur_major )) || \
+       (( new_major == cur_major && new_minor < cur_minor )) || \
+       (( new_major == cur_major && new_minor == cur_minor && new_patch <= cur_patch )); then
+      rm -f "$tmp"
+      warn "Remote version (v${new_version:-unknown}) is not newer than local (v$VERSION) — skipping"
       return
     fi
     chmod +x "$tmp"
