@@ -130,11 +130,21 @@ estimate_session_tokens() {
 }
 
 estimate_project_tokens() {
-  find . -name "*.ts" -o -name "*.tsx" -o -name "*.js" \
+  local total session_est
+  total=$(find . \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" \
          -o -name "*.py" -o -name "*.go" -o -name "*.rs" \
+         -o -name "*.sh" -o -name "*.bash" \) \
     2>/dev/null | \
     grep -v "node_modules\|\.git\|dist\|build\|\.next\|__pycache__" | \
-    xargs wc -l 2>/dev/null | tail -1 | awk '{print $1 * 6}' || echo "$BASELINE_TOKENS"
+    xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+  local estimated=$(( ${total:-0} * TOKENS_PER_LINE ))
+  session_est=$(estimate_session_tokens)
+  # if detected total is less than session size, project has non-standard extensions
+  if [[ "$estimated" -le "$session_est" ]]; then
+    echo "$BASELINE_TOKENS"
+  else
+    echo "$estimated"
+  fi
 }
 
 fmt_tokens() {
@@ -1001,12 +1011,12 @@ cmd_status() {
   local bar_len=22
   local filled=$(( bar_len * session_tokens / (full_tokens > 0 ? full_tokens : 1) ))
   [[ $filled -gt $bar_len ]] && filled=$bar_len
-  local bar_full bar_cms
+  local bar_full bar_ato
   bar_full=$(_make_bar $bar_len $bar_len)
-  bar_cms=$(_make_bar $filled $bar_len)
+  bar_ato=$(_make_bar $filled $bar_len)
 
-  printf "  %-14s  %s  ~%s\n" "Without CMS"  "$bar_full" "$(fmt_tokens $full_tokens) tokens"
-  printf "  %-14s  %s  ~%s\n" "With CMS"     "$bar_cms"  "$(fmt_tokens $session_tokens) tokens"
+  printf "  %-14s  %s  ~%s\n" "Without ato"  "$bar_full" "$(fmt_tokens $full_tokens) tokens"
+  printf "  %-14s  %s  ~%s\n" "With ato"     "$bar_ato"  "$(fmt_tokens $session_tokens) tokens"
   echo -e "  ${GREEN}Saving ~${pct}% per session${RESET}"
   echo ""
 
@@ -1043,7 +1053,11 @@ cmd_status() {
     echo -e "  ${BOLD}This project${RESET}"
     printf "  %s\n" "$(printf '─%.0s' {1..46})"
     printf "  %-14s  %s\n" "Sessions"     "$sessions"
-    printf "  %-14s  ~%s tokens total\n" "Saved" "$(fmt_tokens $tokens_saved)"
+    if [[ "$tokens_saved" -gt 0 ]]; then
+      printf "  %-14s  ~%s tokens total\n" "Saved" "$(fmt_tokens $tokens_saved)"
+    else
+      printf "  %-14s  %s\n" "Saved" "none yet — run: ato focus"
+    fi
     printf "  %-14s  %s\n" "Last session" "${last_s:-none}"
     echo ""
   fi
