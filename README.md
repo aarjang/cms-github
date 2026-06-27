@@ -1,4 +1,4 @@
-# CMS — Context Management System
+# ato — AI Token Optimizer
 
 **کاهش ۷۰-۹۰٪ مصرف توکن در Claude Code**  
 **Reduce Claude Code token usage by 70–90% per session**
@@ -10,7 +10,7 @@
 وقتی Claude Code روی پروژه‌های بزرگ کار می‌کنه، هر session کل codebase رو می‌خونه:
 
 ```
-Session معمولی — بدون CMS:
+Session معمولی — بدون ato:
   Claude میخونه: src/ + tests/ + configs = ~50,000 tokens
   ولی task شما فقط به 2 فایل نیاز داشت = ~3,000 tokens
   اتلاف: ~94%
@@ -22,53 +22,19 @@ When Claude Code works on large projects, it reads the entire codebase each sess
 
 ## راه‌حل / The Solution
 
-سه فایل ساده توی هر پروژه + یه CLI ابزار:
+یه `CONTEXT.md` کوچیک توی هر پروژه + یه CLI ابزار که خودش مدیریتش می‌کنه.
 
-Three simple files per project + a CLI tool:
+One lean `CONTEXT.md` per project + a CLI that keeps it current automatically.
 
-| فایل | کار | Lines |
-|------|-----|-------|
-| `CONTEXT.md` | نقشه پروژه — معماری، contracts، anti-patterns | < 200 |
-| `TASKS.md` | task جاری با scope دقیق | < 50 |
-| `DECISIONS.md` | چرای تصمیمات معماری | هر چقدر |
-
-Claude فقط همین‌ها رو می‌خونه — نه کل codebase.
+Claude فقط همین فایل رو می‌خونه — نه کل codebase.
 
 ---
 
 ## نصب / Install
 
-### یه‌خطی / One-liner
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aarjang/cms/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
 source ~/.zshrc   # or ~/.bashrc
-```
-
-### دستی / Manual
-```bash
-# Clone
-git clone https://github.com/aarjang/cms.git
-cd cms
-
-# Install
-cp bin/cms ~/bin/cms
-chmod +x ~/bin/cms
-mkdir -p ~/.cms
-cp -r templates ~/.cms/
-
-# Add to shell (~/.zshrc or ~/.bashrc)
-export PATH="$HOME/bin:$PATH"
-export CMS_TEMPLATES="$HOME/.cms/templates"
-```
-
-### لینوکس / Linux (same steps)
-```bash
-# اگه sudo داری
-sudo cp bin/cms /usr/local/bin/cms
-sudo chmod +x /usr/local/bin/cms
-
-# بدون sudo
-cp bin/cms ~/bin/cms && chmod +x ~/bin/cms
 ```
 
 ---
@@ -76,32 +42,62 @@ cp bin/cms ~/bin/cms && chmod +x ~/bin/cms
 ## استفاده / Usage
 
 ### اول بار توی هر پروژه / First time in a project
+
 ```bash
 cd ~/projects/my-project
-cms init MyProject
-# → CONTEXT.md, TASKS.md, DECISIONS.md, CLAUDE.md ساخته می‌شن
-# → CONTEXT.md رو پر کن (10 دقیقه)
+ato init
 ```
 
-### قبل از هر session در Claude Code / Before each session
+`ato init` پروژه رو اسکن می‌کنه و `CONTEXT.md` رو **با داده‌های واقعی** پر می‌کنه:
+- Stack و entry points
+- ساختار پوشه‌ها
+- Hot files — فایل‌هایی که بیشترین تغییر رو داشتن (از git)
+- Commands، env vars، dependencies
+- Stop-hook برای auto-sync بعد از هر session
+
+`ato init` scans the project and fills `CONTEXT.md` with **real data** — stack, structure, hot files from git history, commands, and env vars.
+
+اگه `CONTEXT.md` از قبل وجود داشته باشه، می‌پرسه می‌خوای regenerate کنی یا نه.  
+If `CONTEXT.md` already exists, it prompts before overwriting (and backs up first).
+
+### قبل از هر session / Before each Claude Code session
+
 ```bash
-cms focus N-1
-# → یه prompt بهینه می‌سازه + session رو ثبت می‌کنه
+ato focus
 ```
 
-اون prompt رو به عنوان **اولین پیام** توی Claude Code paste کن.
+**بدون هیچ آرگومانی** — ato از روی git تشخیص می‌ده روی چی کار می‌کنی:
 
-### بعد از اتمام task / After task complete
-```bash
-cms done N-1
-# → task archive می‌شه + آمار update می‌شه
+- فایل‌های modified در `git status`
+- فایل‌هایی که در ۷ روز اخیر لمس شدن
+- نام branch برای تشخیص area
+
+یه فایل focused session می‌سازه و Claude دقیقاً می‌دونه کجا نگاه کنه.
+
+**No arguments needed** — ato reads your git signals to auto-detect the work area and generate a focused context file for Claude.
+
+### بعد از session / After session ends
+
+Stop-hook به صورت خودکار `ato sync` می‌زنه — نیازی به کار اضافه نیست.
+
+The stop-hook runs `ato sync` automatically — no manual action needed.
+
+---
+
+## دستورات / Commands
+
 ```
-
-### دیدن آمار / View savings
-```bash
-cms stats           # هر دو / both
-cms stats local     # این پروژه / this project
-cms stats global    # همه پروژه‌ها / all projects
+ato init              اسکن پروژه → CONTEXT.md + CLAUDE.md + stop-hook
+ato focus             auto-detect work area از git → focused session
+ato sync              آپدیت CONTEXT.md (branch، فایل‌های تغییرکرده، git log)
+ato status            وضعیت کلی پروژه + token budget
+ato stats             آمار صرفه‌جویی توکن
+ato scope <pattern>   هزینه توکن یه مجموعه فایل
+ato trim              آدیت CONTEXT.md برای حذف bloat
+ato update            آپدیت ato به آخرین نسخه
+ato add "task"        اضافه کردن task به TASKS.md
+ato focus <id>        focused session برای یه task مشخص
+ato done <id>         archive کردن task
 ```
 
 ---
@@ -109,65 +105,25 @@ cms stats global    # همه پروژه‌ها / all projects
 ## آمار نمونه / Example Stats Output
 
 ```
-CMS Token Savings
+ATO Token Savings
 
-  📁 Project: osta
+  📁 Project: my-app
   ┌─────────────────────────────────────┐
   │  Sessions run                    12  │
   │  Tokens saved               ~847k  │
   │  Tasks completed                 8  │
-  │  Last session           2025-01-15  │
+  │  Last session           2026-06-27  │
   └─────────────────────────────────────┘
   avg ~70k tokens saved per session
-  ≈ $2.54 saved in API costs (@ $3/MTok)
-
-  🌍 All projects (since 2025-01-01)
-  ┌─────────────────────────────────────┐
-  │  Total sessions                  34  │
-  │  Total tokens saved           ~2.1M  │
-  │  Total tasks done               23  │
-  └─────────────────────────────────────┘
-  ≈ $6.30 total API cost saved
 ```
-
----
-
-## دستورات / Commands
-
-```
-cms init [name]          پروژه جدید راه‌اندازی کن
-cms focus <task-id>      session بهینه برای یه task
-cms done <task-id>       task رو archive کن
-cms stats [local|global] آمار صرفه‌جویی توکن
-cms status               وضعیت کلی پروژه
-cms scope <pattern>      هزینه توکن یه مجموعه فایل
-cms trim                 آدیت CONTEXT.md
-cms prompt               startup message برای Claude Code
-cms reset-stats [global] ریست آمار
-```
-
----
-
-## Sync بین Mac و Linux
-
-فایل‌های CMS توی پروژه‌ان → با git sync می‌شن:
-
-```bash
-git add CONTEXT.md TASKS.md DECISIONS.md CLAUDE.md
-git commit -m "chore: add CMS context files"
-git push
-# روی سرور: git pull → همه چیز sync‌ه
-```
-
-فقط `cms` script رو روی هر دستگاه یه بار نصب کن.
 
 ---
 
 ## نمونه / Demo
 
-پوشه `demo/` یه پروژه نمونه کامل داره با CONTEXT.md و TASKS.md پر شده.
+پوشه `demo/` یه پروژه نمونه کامل داره با CONTEXT.md پر شده.
 
-The `demo/` folder contains a complete example project with filled CONTEXT.md and TASKS.md.
+The `demo/` folder contains a complete example project with a filled CONTEXT.md.
 
 ---
 
