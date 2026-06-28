@@ -4,7 +4,7 @@
   / _ \/ ___||__ \
  / /_\/\___ \  / /
 / /_\ \___) |/ /
-\____/|____//_/   v3.4.0
+\____/|____//_/   v3.4.1
   </pre>
 </p>
 
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.4.0-blue?style=flat-square" alt="version"/>
+  <img src="https://img.shields.io/badge/version-3.4.1-blue?style=flat-square" alt="version"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"/>
   <img src="https://img.shields.io/badge/macOS-✓-black?style=flat-square&logo=apple" alt="macOS"/>
   <img src="https://img.shields.io/badge/Linux-✓-yellow?style=flat-square&logo=linux&logoColor=black" alt="Linux"/>
@@ -318,7 +318,7 @@ Claude Code Desktop for Windows calls these and WSL executes them — fully tran
 
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v3.4.0 — my-project                       ║
+║  ATO v3.4.1 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
@@ -707,7 +707,7 @@ Claude Code Desktop ویندوز اینا رو صدا می‌زنه و WSL اج�
 
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v3.4.0 — my-project                       ║
+║  ATO v3.4.1 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
