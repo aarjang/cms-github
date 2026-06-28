@@ -10,23 +10,11 @@
 وقتی Claude Code روی پروژه‌های بزرگ کار می‌کنه، هر session کل codebase رو می‌خونه:
 
 ```
-Session معمولی — بدون ato:
+بدون ato:
   Claude میخونه: src/ + tests/ + configs = ~50,000 tokens
   ولی task شما فقط به 2 فایل نیاز داشت = ~3,000 tokens
   اتلاف: ~94%
 ```
-
-When Claude Code works on large projects, it reads the entire codebase each session — even when your task only touches 2 files.
-
----
-
-## راه‌حل / The Solution
-
-یه `CONTEXT.md` کوچیک توی هر پروژه + یه CLI ابزار که خودش مدیریتش می‌کنه.
-
-One lean `CONTEXT.md` per project + a CLI that keeps it current automatically.
-
-Claude فقط همین فایل رو می‌خونه — نه کل codebase.
 
 ---
 
@@ -41,7 +29,9 @@ source ~/.zshrc   # or ~/.bashrc
 
 ## روند کار / Workflow
 
-### ۱. اول بار توی هر پروژه / First time in a project
+سه مرحله‌ست. همین.
+
+### مرحله ۱ — یه بار توی هر پروژه
 
 ```bash
 cd ~/projects/my-project
@@ -49,136 +39,171 @@ ato init
 ```
 
 پروژه رو اسکن می‌کنه و `CONTEXT.md` رو با داده‌های واقعی پر می‌کنه:
-- Stack و entry points
-- ساختار پوشه‌ها
-- Hot files — فایل‌هایی که بیشترین تغییر رو داشتن (از git)
-- Commands، env vars، dependencies
-- Stop-hook برای auto-sync بعد از هر session
+- Stack، entry points، ساختار پوشه‌ها
+- Hot files — فایل‌هایی که بیشترین تغییر رو داشتن
+- Commands، env vars، stop-hook برای auto-sync
 
-اگه `CONTEXT.md` از قبل وجود داشته باشه، می‌پرسه می‌خوای regenerate کنی یا نه.  
-If `CONTEXT.md` already exists, it prompts before overwriting (and backs up first).
+اگه `CONTEXT.md` قبلاً وجود داشته باشه، می‌پرسه می‌خوای regenerate کنی یا نه.
 
 ---
 
-### ۲. قبل از هر session / Before each Claude Code session
+### مرحله ۲ — قبل از هر session با Claude
 
 ```bash
-ato focus
+ato go
 ```
 
-**بدون هیچ آرگومانی** — ato از روی git تشخیص می‌ده روی چی کار می‌کنی:
+ato از git می‌خونه و تشخیص می‌ده الان روی چی کار می‌کنی:
 - فایل‌های modified در `git status`
-- فایل‌هایی که در ۷ روز اخیر لمس شدن
+- فایل‌هایی که در ۷ روز اخیر تغییر کردن
 - نام branch برای تشخیص area
 
-یه فایل `.ato_focus_auto.md` می‌سازه. این رو به Claude بده:
+یه فایل `.ato_focus_auto.md` می‌سازه. **این رو اول بده به Claude:**
 
 ```
 Read .ato_focus_auto.md and follow the session rules inside it.
 ```
 
-Claude دقیقاً می‌دونه کجا نگاه کنه — نه کل codebase.
+Claude فقط روی همون فایل‌ها focus می‌کنه — نه کل codebase.
+
+خروجی `ato go`:
+
+```
+✓ Auto-focused: current changes
+
+→ Files in scope:
+    src/auth.ts       (142 lines)
+    src/middleware.ts  (89 lines)
+    tests/auth.test.ts (61 lines)
+
+  Startup cost: CONTEXT ~534 + CLAUDE.md ~102 + focus file ~756 = ~1k tokens
+  Available for work: ~165k / ~200k tokens
+
+→ Paste into Claude Code:
+
+    Read .ato_focus_auto.md and follow the session rules inside it.
+```
 
 ---
 
-### ۳. بعد از session / After session ends
+### مرحله ۳ — بعد از session
 
-Stop-hook به صورت خودکار `ato sync` می‌زنه:
-- CONTEXT.md آپدیت می‌شه (branch، فایل‌های تغییرکرده، git log)
-- توکن‌های صرفه‌جویی‌شده ثبت می‌شن
-
-نیازی به کار اضافه نیست.
+هیچ کاری نکن. stop-hook خودکار `ato sync` می‌زنه:
+- CONTEXT.md آپدیت می‌شه
+- savings ثبت می‌شه
 
 ---
 
-### ۴. پیگیری صرفه‌جویی / Track your savings
+## دستورات اصلی / Commands
+
+| دستور | کار |
+|---|---|
+| `ato init` | یه بار — setup پروژه |
+| `ato go` | قبل از هر session |
+| `ato note "text"` | ثبت تصمیم مهم حین session |
+| `ato check` | وضعیت پروژه + context usage + savings |
+| `ato audit` | token budget per section |
+| `ato update` | آپدیت به آخرین نسخه |
+
+---
+
+## `ato check` — وضعیت کامل
 
 ```bash
-ato stats
+ato check
 ```
 
 ```
-ATO Token Savings
+╔══════════════════════════════════════════════════╗
+║  ATO v2.7.0 — my-project                       ║
+╚══════════════════════════════════════════════════╝
 
-  📁 Project: my-app
-  ┌─────────────────────────────────────┐
-  │  Sessions run                    12  │
-  │  Tokens saved               ~847k  │
-  │  Tasks completed                 8  │
-  │  Last session           2026-06-28  │
-  └─────────────────────────────────────┘
-  avg ~70k tokens saved per session
-  ≈ $2.54 saved in API costs (@ $3/MTok)
+  Context
+  ──────────────────────────────────────────────
+  ✓  CONTEXT.md      89 lines  ~534    lean ✓
+  ✓  CLAUDE.md       17 lines  ~102    lean ✓
+  ✓  Stop-hook       active
+
+  Available for work: ~166k / ~200k tokens (83% free)
+
+  Session
+  ──────────────────────────────────────────────
+  ██████░░░░░░░░░░░░░░░░░░  25%  safe to continue
+
+  Git
+  ──────────────────────────────────────────────
+  Branch          main
+  Status          clean
+  Last commit     "fix: auth middleware" (2 hours ago)
+
+  Savings
+  ──────────────────────────────────────────────
+  Sessions        12
+  Saved           ~847k tokens  ≈ $2.54
+  Last session    2026-06-28
 ```
 
 ---
 
-## بررسی token budget / Check token budget
+## `ato audit` — بررسی token budget
 
 ```bash
-ato trim
+ato audit
 ```
 
 ```
 Section                        Lines  Tokens  Share
 ──────────────────────────────────────────────────────────
-Identity                           6     ~36    7%
-Commands                          10     ~60   12%
-Structure                         25    ~150   29%  ← trim
+Architecture snapshot             25    ~150   29%  ← trim
 Key dependencies                  14     ~84   16%
+Commands                          10     ~60   12%
 Hot files                          9     ~54   10%
-...
+Identity                           6     ~36    7%
 ──────────────────────────────────────────────────────────
 Total                             89    ~534
 ```
 
-نشون می‌ده کدوم section بیشترین توکن مصرف می‌کنه تا بدونی کجا trim کنی.
+sections بزرگ رو شناسایی می‌کنه تا بدونی کجا trim کنی.
+
+---
+
+## گزینه‌های پیشرفته / Power Options
+
+```bash
+# focus روی یه topic مشخص
+ato go auth
+
+# محدود کردن scope برای Pro plan
+ato go --budget 40k
+
+# ثبت تصمیم که بعد از compaction باقی بمونه
+ato note "decided to use optimistic locking"
+
+# token cost یه مجموعه فایل
+ato audit --scope "src/**/*.ts"
+
+# ثبت ato به عنوان MCP server (Claude مستقیم صداش می‌زنه)
+ato mcp install
+
+# task tracking اختیاری
+ato task add "fix login bug"
+ato task done 1
+```
 
 ---
 
 ## MCP Server Mode
 
-ato می‌تونه به عنوان یه MCP server اجرا بشه — یعنی Claude Code می‌تونه مستقیماً دستورات ato رو صدا بزنه بدون اینکه کاربر چیزی تایپ کنه.
+ato می‌تونه به عنوان MCP server اجرا بشه — Claude Code مستقیماً می‌تونه ato رو صدا بزنه:
 
 ```bash
-ato mcp install   # ato رو به .claude/settings.json اضافه می‌کنه
+ato mcp install
+# → .claude/settings.json رو آپدیت می‌کنه
+# → Claude Code رو restart کن
 ```
 
-بعد از restart کردن Claude Code، این tools در دسترس Claude هستن:
-
-| Tool | کار |
-|---|---|
-| `ato_focus` | auto-focus از git signals |
-| `ato_sync` | sync CONTEXT.md + ثبت savings |
-| `ato_note` | ثبت تصمیم در CONTEXT.md |
-| `ato_status` | وضعیت پروژه |
-| `ato_doctor` | audit startup tokens |
-| `ato_checkpoint` | برآورد context usage |
-
----
-
-## دستورات / Commands
-
-```
-ato init                اسکن پروژه → CONTEXT.md + CLAUDE.md + stop-hook
-ato focus               auto-detect work area از git → focused session
-ato focus <topic>       focus روی یه topic مشخص (جستجو در git history)
-ato focus --budget 40k  trim scope برای Pro plan (محدودیت توکن)
-ato sync                آپدیت CONTEXT.md + ثبت savings
-ato note "text"         ثبت تصمیم در CONTEXT.md (بعد از compaction باقی می‌مونه)
-ato status              وضعیت کلی پروژه + token budget
-ato stats               آمار صرفه‌جویی توکن + معادل دلاری
-ato trim                token budget per section + آدیت CONTEXT.md
-ato slim [file]         نمایش sections CLAUDE.md بر اساس اندازه
-ato doctor              audit overhead startup (CLAUDE.md، memory files)
-ato checkpoint          برآورد context usage + پیشنهاد stopping point
-ato scope <pattern>     هزینه توکن یه مجموعه فایل
-ato mcp install         ثبت ato به عنوان MCP server در Claude Code
-ato update              آپدیت ato به آخرین نسخه
-ato add "task"          اضافه کردن task به TASKS.md
-ato focus <id>          focused session برای یه task مشخص
-ato done <id>           archive کردن task
-```
+بعد Claude می‌تونه مستقیم از این tools استفاده کنه:
+`ato_focus` · `ato_sync` · `ato_note` · `ato_status` · `ato_doctor` · `ato_checkpoint`
 
 ---
 
