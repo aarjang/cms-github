@@ -704,6 +704,18 @@ _auto_focus() {
     [[ -n "$f" ]] && dim "    $f"
   done <<< "$all_focus_files"
   echo ""
+
+  # Startup token breakdown
+  local ctx_t cl_t focus_t startup_t avail
+  ctx_t=$(( $(wc -l < "$CONTEXT_FILE" 2>/dev/null || echo 0) * TOKENS_PER_LINE ))
+  cl_t=$(( $(wc -l < "$CLAUDE_FILE" 2>/dev/null || echo 0) * TOKENS_PER_LINE ))
+  focus_t=$(( $(wc -l < "$focused" 2>/dev/null || echo 0) * TOKENS_PER_LINE ))
+  startup_t=$(( ctx_t + cl_t + focus_t ))
+  avail=$(( 200000 - 33000 - startup_t ))
+  echo -e "  ${DIM}Startup cost: CONTEXT ~$(fmt_tokens $ctx_t) + CLAUDE.md ~$(fmt_tokens $cl_t) + focus file ~$(fmt_tokens $focus_t) = ~$(fmt_tokens $startup_t) tokens${RESET}"
+  echo -e "  ${DIM}Available for work: ~$(fmt_tokens $avail) / ~200k tokens${RESET}"
+  echo ""
+
   info "Paste into Claude Code:"
   echo ""
   echo -e "${BOLD}    Read $focused and follow the session rules inside it.${RESET}"
@@ -835,6 +847,15 @@ cmd_sync() {
     [[ -n "$changed" ]] && info "Files: $changed"
   fi
   info "Saved ~$(fmt_tokens $saved) tokens this session"
+
+  # Compaction warning: if last sync was not today, compaction may have occurred
+  local last_s today
+  last_s=$(json_get "$LOCAL_STATS" "last_session" 2>/dev/null | cut -c1-10 || echo "")
+  today=$(date +%Y-%m-%d)
+  if [[ -n "$last_s" && "$last_s" != "$today" ]]; then
+    warn "Last session was $last_s — Claude may have compacted this session"
+    dim "  Key decisions from today may be lost. Consider: ato note \"what was decided\""
+  fi
 }
 
 cmd_add() {
@@ -1390,6 +1411,73 @@ EOF
   esac
 }
 
+# ─── Slim ────────────────────────────────────────────────────────────
+cmd_slim() {
+  local target_file="${1:-$CLAUDE_FILE}"
+  [[ ! -f "$target_file" ]] && { error "$target_file not found"; exit 1; }
+
+  local lines
+  lines=$(wc -l < "$target_file")
+
+  if [[ $lines -le 200 ]]; then
+    success "$target_file is already lean ($lines lines) — nothing to do"
+    return
+  fi
+
+  header "ato slim — $target_file ($lines lines → target: 200)"
+  echo ""
+
+  # Parse sections and their sizes
+  local section_name="" section_start=1 section_lines=0
+  local -a sections=()
+
+  while IFS= read -r line; do
+    local linenum="${line%%	*}"  # line number from nl
+    local content="${line#*	}"
+    if [[ "$content" =~ ^##[[:space:]] ]]; then
+      if [[ -n "$section_name" ]]; then
+        sections+=("$section_lines|$section_start|$section_name")
+      fi
+      section_name="$content"
+      section_start=$linenum
+      section_lines=0
+    else
+      section_lines=$(( section_lines + 1 ))
+    fi
+  done < <(nl -ba -nrz -w1 "$target_file" 2>/dev/null | sed 's/^\([0-9]*\)[[:space:]]*/\1\t/')
+  [[ -n "$section_name" ]] && sections+=("$section_lines|$section_start|$section_name")
+
+  echo -e "  ${BOLD}Sections by size (largest first):${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..48})"
+
+  local IFS_SAVE="$IFS"
+  # Sort by size descending and display
+  for entry in $(printf '%s\n' "${sections[@]+"${sections[@]}"}" | sort -t'|' -k1 -rn); do
+    local sz="${entry%%|*}"
+    local rest="${entry#*|}"
+    local name="${rest#*|}"
+    local tokens=$(( sz * TOKENS_PER_LINE ))
+    if [[ $sz -gt 30 ]]; then
+      printf "  ${YELLOW}%-40s %3d lines  ~%s tokens${RESET}\n" "$name" "$sz" "$(fmt_tokens $tokens)"
+    else
+      printf "  %-40s %3d lines  ~%s tokens\n" "$name" "$sz" "$(fmt_tokens $tokens)"
+    fi
+  done
+  IFS="$IFS_SAVE"
+
+  echo ""
+  local over=$(( lines - 200 ))
+  warn "Need to remove ~$over lines to reach 200-line target"
+  echo ""
+  info "Options:"
+  dim "  1. Manually edit $target_file — remove large sections shown above"
+  dim "  2. Move verbose rules to .claude/rules/ (path-scoped, load only when needed)"
+  dim "  3. Replace multi-line examples with one-line pointers"
+  echo ""
+  info "Backup first: cp $target_file ${target_file}.bak"
+  echo ""
+}
+
 # ─── Doctor ──────────────────────────────────────────────────────────
 cmd_doctor() {
   local WINDOW=200000
@@ -1608,6 +1696,7 @@ cmd_help() {
   echo "  stats [local|global] Token savings breakdown"
   echo "  scope <pattern>      Estimate token cost of a file set (e.g. '*.ts')"
   echo "  trim                 Audit CONTEXT.md for bloat (target: <200 lines)"
+  echo "  slim [file]          Show CLAUDE.md sections by size + how to reduce"
   echo "  doctor               Audit startup token overhead (CLAUDE.md, memory, CONTEXT.md)"
   echo "  checkpoint           Estimate current context usage + stopping recommendation"
   echo "  prompt               Print the optimal Claude Code session starter"
@@ -1639,6 +1728,7 @@ main() {
     status)         cmd_status "$@" ;;
     scope)          cmd_scope "$@" ;;
     trim)           cmd_trim "$@" ;;
+    slim)           cmd_slim "$@" ;;
     doctor)         cmd_doctor ;;
     checkpoint)     cmd_checkpoint ;;
     prompt)         cmd_prompt ;;
