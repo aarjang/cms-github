@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="2.9.0"
+VERSION="3.0.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -283,7 +283,7 @@ _detect_key_deps() {
     grep -E '^\s+"[^"]+": "[^"]*"' package.json 2>/dev/null | \
       grep -v '"name"\|"version"\|"description"\|"main"\|"license"\|"author"\|"private"\|"type"\|"module"' | \
       sed 's/.*"\([^"]*\)":[[:space:]]*"\([^"]*\)".*/  \1: \2/' | \
-      grep -v "^[[:space:]]*$" | head -14
+      grep -v "^[[:space:]]*$" | head -8
     return
   fi
   if [[ -f "requirements.txt" ]]; then
@@ -307,7 +307,7 @@ _detect_env_vars() {
   for f in .env.example .env.sample .env.template .env.test; do
     if [[ -f "$f" ]]; then
       grep -E '^[A-Z_]+=?' "$f" 2>/dev/null | \
-        awk -F= '{print "  " $1 "=<value>"}' | head -15
+        awk -F= '{print "  " $1 "=<value>"}' | head -8
       return
     fi
   done
@@ -315,7 +315,7 @@ _detect_env_vars() {
   found=$(grep -rh "process\.env\." --include="*.ts" --include="*.js" \
     --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null | \
     grep -oE 'process\.env\.[A-Z_]+' | sed 's/process\.env\.//' | \
-    sort -u | head -12 | awk '{print "  " $0 "=<value>"}')
+    sort -u | head -8 | awk '{print "  " $0 "=<value>"}')
   [[ -n "$found" ]] && echo "$found" && return
   echo "  [none detected — add .env.example to document these]"
 }
@@ -349,9 +349,277 @@ _detect_god_files() {
   local result
   result=$(git log --since="90 days ago" --name-only --format="" 2>/dev/null | \
     grep -v "^$\|\.lock$\|CONTEXT\.md\|CLAUDE\.md\|\.ato-stats\|\.cms-stats\|\.gitignore" | \
-    sort | uniq -c | sort -rn | head -7 | \
+    sort | uniq -c | sort -rn | head -5 | \
     awk '{printf "  %-45s (%d changes)\n", $2, $1}')
   [[ -n "$result" ]] && echo "$result" || echo "  [no git history yet]"
+}
+
+# ─── Code intelligence (added in v3.0.0) ─────────────────────────────
+
+_detect_architecture_layers() {
+  local result="" any_found=0
+
+  local -a specs=(
+    "controllers|controllers controller|*Controller.* *controller.*"
+    "services|services service|*Service.* *service.*"
+    "models|models entities schemas model entity schema|*Model.* *Entity.* *Schema.*"
+    "repositories|repositories repos repository|*Repository.* *Repo.*"
+    "middleware|middleware middlewares|*Middleware.* *Guard.* *Interceptor.*"
+    "routes|routes routers|*Router.* *Routes.*"
+    "handlers|handlers|*Handler.*"
+    "utils|utils helpers lib|"
+    "tests|__tests__ test tests spec|*.test.* *.spec.*"
+  )
+
+  local spec
+  for spec in "${specs[@]+"${specs[@]}"}"; do
+    local lname="${spec%%|*}"
+    local rest="${spec#*|}"
+    local dpats="${rest%%|*}"
+    local fpats="${rest#*|}"
+    local found_files=""
+
+    local d
+    for d in $dpats; do
+      local df
+      df=$(find . -type f -path "*/${d}/*" \
+        -not -path "*/node_modules/*" -not -path "*/.git/*" \
+        -not -path "*/dist/*" -not -path "*/build/*" \
+        -not -path "*/.next/*" -not -path "*/vendor/*" \
+        2>/dev/null || true)
+      [[ -n "$df" ]] && found_files="${found_files}"$'\n'"${df}"
+    done
+
+    if [[ -n "$fpats" ]]; then
+      local p
+      for p in $fpats; do
+        local pf
+        pf=$(find . -type f -name "$p" \
+          -not -path "*/node_modules/*" -not -path "*/.git/*" \
+          -not -path "*/dist/*" -not -path "*/build/*" \
+          -not -path "*/.next/*" -not -path "*/vendor/*" \
+          2>/dev/null || true)
+        [[ -n "$pf" ]] && found_files="${found_files}"$'\n'"${pf}"
+      done
+    fi
+
+    [[ -z "$found_files" ]] && continue
+
+    local unique_files
+    unique_files=$(printf "%s\n" "$found_files" | grep -v "^[[:space:]]*$" | sort -u || true)
+    [[ -z "$unique_files" ]] && continue
+
+    local count
+    count=$(printf "%s\n" "$unique_files" | grep -c "[^[:space:]]" || echo 0)
+    [[ "${count:-0}" -eq 0 ]] && continue
+
+    any_found=1
+
+    local names="" shown=0 has_more=0
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      if [[ $shown -lt 3 ]]; then
+        local base stem
+        base=$(basename "$f")
+        stem="${base%%.*}"
+        [[ -n "$names" ]] && names="${names}, "
+        names="${names}${stem}"
+        shown=$(( shown + 1 ))
+      else
+        has_more=1
+        break
+      fi
+    done <<< "$unique_files"
+    [[ $has_more -eq 1 ]] && names="${names} ..."
+
+    if [[ -n "$names" ]]; then
+      result="${result}$(printf "  %-16s %3d files   %s" "${lname}/" "$count" "$names")"$'\n'
+    else
+      result="${result}$(printf "  %-16s %3d files" "${lname}/" "$count")"$'\n'
+    fi
+  done
+
+  [[ $any_found -eq 0 ]] && return
+  printf "%s" "$result"
+}
+
+_detect_import_hubs() {
+  local src_files
+  src_files=$(find . \
+    \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+       -o -name "*.py" -o -name "*.go" \) \
+    -not -path "*/node_modules/*" -not -path "*/.git/*" \
+    -not -path "*/dist/*" -not -path "*/build/*" \
+    -not -path "*/.next/*" -not -path "*/vendor/*" \
+    -not -path "*/__pycache__/*" \
+    2>/dev/null || true)
+  [[ -z "$src_files" ]] && return
+
+  # Extract import stems from TS/JS (single + double quote variants)
+  local raw_imports
+  raw_imports=$(printf "%s\n" "$src_files" | \
+    xargs grep -hE "from ['\"]([^'\"]+)['\"]" 2>/dev/null | \
+    grep -oE "['\"][^'\"]+['\"]" | tr -d "'\"\t " | \
+    awk -F'/' '{
+      stem = $NF
+      sub(/\.[jt]sx?$/, "", stem)
+      # skip index, relative, empty, node built-ins
+      if (stem == "index" || stem == "" || stem ~ /^\./) next
+      print stem
+    }' || true)
+
+  # Also extract Python imports
+  local py_files
+  py_files=$(printf "%s\n" "$src_files" | grep "\.py$" || true)
+  if [[ -n "$py_files" ]]; then
+    local py_raw
+    py_raw=$(printf "%s\n" "$py_files" | \
+      xargs grep -hE "^from [a-zA-Z_]|^import [a-zA-Z_]" 2>/dev/null | \
+      awk '{print $2}' | awk -F'.' '{print $NF}' || true)
+    [[ -n "$py_raw" ]] && raw_imports="${raw_imports}"$'\n'"${py_raw}"
+  fi
+
+  [[ -z "$raw_imports" ]] && return
+
+  local counted
+  counted=$(printf "%s\n" "$raw_imports" | \
+    grep -v "^[[:space:]]*$" | \
+    sort | uniq -c | sort -rn | head -20 || true)
+  [[ -z "$counted" ]] && return
+
+  local shown=0
+  while IFS= read -r line; do
+    [[ -z "${line// }" ]] && continue
+    local cnt stem
+    cnt=$(printf "%s" "$line" | awk '{print $1}')
+    stem=$(printf "%s" "$line" | awk '{print $2}')
+    [[ -z "$stem" || "${cnt:-0}" -le 1 ]] && continue
+
+    # Resolve to actual file — if not found, it's an npm package → skip
+    local filepath
+    filepath=$(find . -name "${stem}.*" \
+      -not -path "*/node_modules/*" -not -path "*/.git/*" \
+      -not -path "*/dist/*" -not -path "*/build/*" \
+      -not -name "*.test.*" -not -name "*.spec.*" \
+      -not -name "*.d.ts" \
+      2>/dev/null | head -1 || true)
+    [[ -z "$filepath" ]] && continue
+
+    filepath="${filepath#./}"
+    printf "  %3d  %s\n" "$cnt" "$filepath"
+    shown=$(( shown + 1 ))
+    [[ $shown -ge 8 ]] && break
+  done <<< "$counted"
+}
+
+_detect_exports_for_file() {
+  local file="$1"
+  [[ ! -f "$file" ]] && echo "(file not found)" && return
+
+  local names="" count=0
+
+  case "$file" in
+    *.ts|*.tsx|*.js|*.jsx)
+      while IFS= read -r line; do
+        [[ $count -ge 6 ]] && names="${names} ..." && break
+        local name
+        name=$(printf "%s" "$line" | awk '{
+          gsub(/^export (default |async )*(function|class|interface|type|enum|const|let|var) /, "")
+          gsub(/^export default /, "")
+          sub(/[(<={: ].*/, "")
+          if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print $0
+        }' || true)
+        [[ -z "$name" ]] && continue
+        [[ -n "$names" ]] && names="${names} · "
+        names="${names}${name}"
+        count=$(( count + 1 ))
+      done < <(grep -E "^export " "$file" 2>/dev/null || true)
+      ;;
+    *.py)
+      while IFS= read -r line; do
+        [[ $count -ge 6 ]] && names="${names} ..." && break
+        local name
+        name=$(printf "%s" "$line" | awk '{print $2}' | sed 's/[(:].*$//')
+        [[ "$name" =~ ^[a-zA-Z][a-zA-Z0-9_]*$ && ! "$name" =~ ^_ ]] || continue
+        [[ -n "$names" ]] && names="${names} · "
+        names="${names}${name}"
+        count=$(( count + 1 ))
+      done < <(grep -E "^def [a-zA-Z]|^class [A-Z]" "$file" 2>/dev/null || true)
+      ;;
+    *.go)
+      while IFS= read -r line; do
+        [[ $count -ge 6 ]] && names="${names} ..." && break
+        local name
+        name=$(printf "%s" "$line" | awk '{print $2}' | sed 's/(.*//')
+        [[ "$name" =~ ^[A-Z][A-Za-z0-9]*$ ]] || continue
+        [[ -n "$names" ]] && names="${names} · "
+        names="${names}${name}"
+        count=$(( count + 1 ))
+      done < <(grep -E "^func [A-Z]" "$file" 2>/dev/null || true)
+      ;;
+  esac
+
+  if [[ -z "$names" ]]; then
+    echo "(no named exports)"
+  else
+    echo "$names"
+  fi
+}
+
+_detect_cochange_clusters() {
+  local commit_count
+  commit_count=$(git log --since="90 days ago" --oneline 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+  [[ "${commit_count:-0}" -lt 5 ]] && return
+
+  local pairs
+  pairs=$(git log --since="90 days ago" --name-only --pretty=format:"---COMMIT---" 2>/dev/null | \
+    awk '
+      /^---COMMIT---$/ {
+        if (n >= 2) {
+          lim = (n > 20) ? 20 : n
+          for (i = 1; i <= lim; i++) {
+            for (j = i + 1; j <= lim; j++) {
+              a = files[i]; b = files[j]
+              if (a > b) { tmp = a; a = b; b = tmp }
+              co[a SUBSEP b]++
+            }
+          }
+        }
+        n = 0; delete files; next
+      }
+      !/node_modules|\.git\/|dist\/|build\/|\.lock$|package-lock|CONTEXT\.md|CLAUDE\.md|\.md$|\.json$|\.yaml$|\.yml$|\.txt$/ &&
+      /\// {
+        files[++n] = $0
+      }
+      END {
+        if (n >= 2) {
+          lim = (n > 20) ? 20 : n
+          for (i = 1; i <= lim; i++) {
+            for (j = i + 1; j <= lim; j++) {
+              a = files[i]; b = files[j]
+              if (a > b) { tmp = a; a = b; b = tmp }
+              co[a SUBSEP b]++
+            }
+          }
+        }
+        for (pair in co) {
+          if (co[pair] >= 2) {
+            split(pair, p, SUBSEP)
+            printf "%d\t%s\t%s\n", co[pair], p[1], p[2]
+          }
+        }
+      }
+    ' | sort -rn | head -6 || true)
+
+  [[ -z "$pairs" ]] && return
+
+  while IFS=$(printf '\t') read -r cnt file_a file_b; do
+    [[ -z "$cnt" || -z "$file_a" || -z "$file_b" ]] && continue
+    local base_a base_b
+    base_a=$(basename "$file_a")
+    base_b=$(basename "$file_b")
+    printf "  %-28s ↔ %-28s  %d commits\n" "$base_a" "$base_b" "$cnt"
+  done <<< "$pairs"
 }
 
 _make_bar() {
@@ -364,8 +632,7 @@ _make_bar() {
 }
 
 _generate_tree() {
-  # Single find sorted naturally so dirs appear before their children
-  find . -mindepth 1 -maxdepth 3 \
+  find . -mindepth 1 -maxdepth 2 \
     -not -path "*/.git"            -not -path "*/.git/*" \
     -not -path "*/node_modules"    -not -path "*/node_modules/*" \
     -not -path "*/dist"            -not -path "*/dist/*" \
@@ -385,15 +652,15 @@ _generate_tree() {
       for (i = 0; i < depth; i++) prefix = prefix "  "
       if (depth == 0) print name
       else            print prefix "└─ " name
-    }' | head -60
+    }' | head -20
 }
 
 _auto_fill_context() {
   local project="$1"
   local stack entry run_cmd test_cmd build_cmd lint_cmd description branch tree
-  local key_deps env_vars conventions git_log god_files
+  local key_deps env_vars git_log god_files
 
-  info "Scanning project..."
+  info "Scanning project structure..."
   description=$(_detect_description)
   stack=$(_detect_stack)
   entry=$(_detect_entry)
@@ -403,11 +670,47 @@ _auto_fill_context() {
   lint_cmd=$(_detect_lint_cmd)
   key_deps=$(_detect_key_deps)
   env_vars=$(_detect_env_vars)
-  conventions=$(_detect_conventions)
   god_files=$(_detect_god_files)
   branch=$(git branch --show-current 2>/dev/null || echo "main")
   tree=$(_generate_tree)
-  git_log=$(git log --oneline -5 --format="  %h %s (%ar)" 2>/dev/null || echo "  [no git history yet]")
+  git_log=$(git log --oneline -3 --format="  %h %s (%ar)" 2>/dev/null || echo "  [no git history yet]")
+
+  info "Building code graph..."
+  local arch_layers import_hubs cochange_clusters
+  arch_layers=$(_detect_architecture_layers)
+  import_hubs=$(_detect_import_hubs)
+  cochange_clusters=$(_detect_cochange_clusters)
+
+  # Pre-build conditional section blocks (header + content, or empty)
+  local arch_section=""
+  [[ -n "$arch_layers" ]] && arch_section="## Architecture
+$arch_layers"
+
+  # Build critical path block with inline export surface for top 5 files
+  local critical_section=""
+  if [[ -n "$import_hubs" ]]; then
+    local cp_content="" hub_n=0
+    while IFS= read -r hub_line; do
+      [[ -z "${hub_line// }" ]] && continue
+      cp_content="${cp_content}${hub_line}"$'\n'
+      hub_n=$(( hub_n + 1 ))
+      if [[ $hub_n -le 5 ]]; then
+        local hub_path
+        hub_path=$(printf "%s" "$hub_line" | awk '{print $2}')
+        if [[ -n "$hub_path" && -f "$hub_path" ]]; then
+          local hub_exports
+          hub_exports=$(_detect_exports_for_file "$hub_path")
+          cp_content="${cp_content}        exports: ${hub_exports}"$'\n'
+        fi
+      fi
+    done <<< "$import_hubs"
+    critical_section="## Critical path (read these first)
+$cp_content"
+  fi
+
+  local cochange_section=""
+  [[ -n "$cochange_clusters" ]] && cochange_section="## Coupling map (change these together)
+$cochange_clusters"
 
   cat > "$CONTEXT_FILE" << EOF
 # PROJECT CONTEXT — $project
@@ -430,6 +733,10 @@ build: $build_cmd
 lint:  $lint_cmd
 \`\`\`
 
+$arch_section
+
+$critical_section
+
 ## Structure
 \`\`\`
 $project/
@@ -442,13 +749,12 @@ $key_deps
 ## Environment variables
 $env_vars
 
-## Conventions
-$conventions
-
-## Hot files (most-changed — read these first)
+## Hot files (most changed)
 $god_files
 
-## Recent git history
+$cochange_section
+
+## Recent activity
 $git_log
 
 ## Anti-patterns
