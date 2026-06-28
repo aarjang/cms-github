@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="3.4.2"
+VERSION="3.4.3"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -566,6 +566,48 @@ _detect_exports_for_file() {
   fi
 }
 
+_file_role() {
+  local file="$1"
+  [[ ! -f "$file" ]] && echo "" && return
+  local role
+  role=$(grep -m3 -E "^#[^!]|^//[^/]|^[[:space:]]*\"\"\"" "$file" 2>/dev/null | \
+    sed 's|^[[:space:]]*[#/*]*[[:space:]]*||; s|"""||g' | \
+    grep -ivE "^$|shellcheck|coding:|encoding:|vim:|eslint|copyright|license|auto-generated" | \
+    head -1 | cut -c1-70 || true)
+  if [[ -z "$role" ]]; then
+    local base dir
+    base=$(basename "$file" | sed 's/\.[^.]*$//')
+    dir=$(dirname "$file" | xargs basename 2>/dev/null || echo "")
+    case "${dir}/${base}" in
+      *[Cc]ontroller*) role="controller — ${base}" ;;
+      *[Ss]ervice*)    role="service — ${base}" ;;
+      *[Mm]odel*)      role="model — ${base}" ;;
+      *[Mm]iddleware*) role="middleware — ${base}" ;;
+      *util*|*helper*|*lib*) role="utility — ${base}" ;;
+      *test*|*spec*)   role="tests — ${base}" ;;
+      *)               role="${dir}/${base}" ;;
+    esac
+  fi
+  printf "%s" "$role"
+}
+
+_coupling_partners() {
+  local file="$1"
+  [[ ! -f "$CONTEXT_FILE" ]] && echo "" && return
+  local base partners
+  base=$(basename "$file")
+  partners=$(grep "↔" "$CONTEXT_FILE" 2>/dev/null | grep -F "$base" | \
+    sed 's/[[:space:]]*↔[[:space:]]*/↔/g; s/[[:space:]]*[0-9]* commits.*//' | \
+    sed 's/^[[:space:]]*//' | \
+    awk -F'↔' -v me="$base" '{
+      gsub(/[[:space:]]+/, "", $1); gsub(/[[:space:]]+/, "", $2)
+      if ($1 != me && $1 != "") print $1
+      if ($2 != me && $2 != "") print $2
+    }' | grep -v "^$" | sort -u || true)
+  [[ -z "$partners" ]] && echo "" && return
+  printf "%s" "$(echo "$partners" | tr '\n' '·' | sed 's/·$//; s/·/ · /g')"
+}
+
 _detect_cochange_clusters() {
   local commit_count
   commit_count=$(git log --since="90 days ago" --oneline 2>/dev/null | wc -l | tr -d ' ' || echo 0)
@@ -1047,9 +1089,9 @@ _auto_focus() {
     grep -v "^$\|CONTEXT\.md\|CLAUDE\.md\|\.lock$\|\.ato-stats\|\.cms-stats" | \
     sort | uniq -c | sort -rn | awk '{print $2}' | head -8)
 
-  # Merge deduped: modified first, then recent
+  # Merge deduped: modified first, then recent; sort for cache-stable ordering
   all_focus_files=$(printf "%s\n%s" "$modified_files" "$recent_files" | \
-    grep -v "^$" | awk '!seen[$0]++' | head -8 || true)
+    grep -v "^$" | awk '!seen[$0]++' | sort | head -8 || true)
 
   if [[ -z "$all_focus_files" ]]; then
     warn "No recent changes detected — nothing to focus on."
@@ -1088,7 +1130,7 @@ _auto_focus() {
 
   {
     echo "# Claude Code — Auto-Focus Session"
-    echo "# Area: $focus_area  |  branch: $branch  |  $(date +%Y-%m-%d\ %H:%M)"
+    echo "# Area: $focus_area  |  branch: $branch"
     echo ""
     echo "## Context (read this first):"
     cat "$CONTEXT_FILE"
@@ -1099,46 +1141,35 @@ _auto_focus() {
     fi
     echo ""
     echo "---"
-    echo "## Auto-detected work area: $focus_area"
-    echo ""
-    echo "Focus ONLY on these files (derived from git signals):"
-    echo ""
-    while IFS= read -r f; do
-      [[ -z "$f" ]] && continue
-      if [[ -f "$f" ]]; then
-        local lines
-        lines=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
-        echo "  - \`$f\`  ($lines lines)"
-      else
-        echo "  - \`$f\`"
-      fi
-    done <<< "$all_focus_files"
-    echo ""
-    echo "### Recent commits touching these files:"
-    # shellcheck disable=SC2086
-    git log --since="14 days ago" --oneline -- $all_focus_files 2>/dev/null | \
-      head -5 | awk '{print "  " $0}' || echo "  [none]"
-    echo ""
-    echo "---"
-    echo "## File contents (first 80 lines each — ask to see more):"
+    echo "## Files in scope (git signals: staged changes + last 7 days)"
     echo ""
     while IFS= read -r f; do
       [[ -z "$f" || ! -f "$f" ]] && continue
-      local total_lines
-      total_lines=$(wc -l < "$f" 2>/dev/null | tr -d ' ' || echo 0)
-      echo "### \`$f\`  ($total_lines lines)"
-      echo '```'
-      head -80 "$f"
-      [[ "$total_lines" -gt 80 ]] && echo "... ($(( total_lines - 80 )) more lines — ask to see them)"
-      echo '```'
-      echo ""
+      local flines role exports partners
+      flines=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+      role=$(_file_role "$f")
+      exports=$(_detect_exports_for_file "$f")
+      if [[ "$exports" != "(no named exports)" && "$exports" != "(file not found)" ]]; then
+        printf "  \`%s\`  (%s lines)  — %s  → exports: %s\n" "$f" "$flines" "$role" "$exports"
+      else
+        printf "  \`%s\`  (%s lines)  — %s\n" "$f" "$flines" "$role"
+      fi
+      partners=$(_coupling_partners "$f")
+      [[ -n "$partners" ]] && printf "    ↔ usually changes with: %s\n" "$partners"
     done <<< "$all_focus_files"
+    echo ""
     echo "---"
     echo "## Session rules:"
     echo "1. Only read files listed above — do NOT explore the rest of the codebase"
     echo "2. Ask before touching any file not in scope"
     echo "3. Keep changes minimal and targeted"
     echo "4. When done: report DONE + one-line summary"
+    echo ""
+    echo "---"
+    echo "## Recent commits touching these files:"
+    # shellcheck disable=SC2086
+    git log --since="14 days ago" --oneline -- $all_focus_files 2>/dev/null | \
+      head -5 | awk '{print "  " $0}' || echo "  [none]"
   } > "$focused"
 
   record_session 0
