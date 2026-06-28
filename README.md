@@ -38,12 +38,16 @@ cd ~/projects/my-project
 ato init
 ```
 
-پروژه رو اسکن می‌کنه و همه چیز رو وایر می‌کنه:
-- `CONTEXT.md` با داده‌های واقعی (stack، entry points، hot files)
-- `CLAUDE.md` با دستورالعمل auto-focus
-- دو hook در `.claude/settings.json`:
-  - **UserPromptSubmit** → `ato go --quiet` (focus قبل از هر session)
-  - **Stop** → `ato sync` (sync بعد از هر session)
+پروژه رو اسکن می‌کنه، کد رو آنالیز می‌کنه، و همه چیز رو وایر می‌کنه:
+
+**Code Intelligence Graph** — داخل `CONTEXT.md` ذخیره می‌شه:
+- معماری پروژه (MVC layers, module structure)
+- Critical path — فایل‌هایی که بیشترین dependency دارن + API‌شون
+- Coupling map — فایل‌هایی که همیشه با هم تغییر می‌کنن (از git history)
+
+**Auto-focus hooks** — داخل `.claude/settings.json`:
+- `UserPromptSubmit` → `ato go --quiet` (focus قبل از هر session)
+- `Stop` → `ato sync` (sync بعد از هر session)
 
 ---
 
@@ -55,33 +59,65 @@ claude
 
 همین. دیگه هیچ.
 
-- `ato go --quiet` خودکار اجرا می‌شه
-- Claude فایل focus رو خودکار می‌خونه
-- فقط روی فایل‌های مرتبط با کار الان کار می‌کنه
+- Claude معماری پروژه رو از اول می‌دونه
+- focus file خودکار ساخته و خونده می‌شه
 - بعد از session، sync خودکاره
 
 **بدون copy-paste. بدون `ato go`. فقط Claude رو باز کن و تایپ کن.**
 
 ---
 
+## Code Intelligence Graph
+
+```
+## Architecture
+  controllers/     3 files   AuthController, UserController, OrderController
+  services/        5 files   AuthService, PaymentService, EmailService ...
+  models/          4 files   User, Order, Product, Session
+  middleware/      2 files
+
+## Critical path (read these first)
+   12  src/services/auth.ts
+        exports: authenticateUser · validateToken · hashPassword
+    9  src/lib/db.ts
+        exports: getConnection · query · transaction
+    8  src/types/index.ts
+        exports: User · Order · ApiResponse · PaginatedResult
+
+## Coupling map (change these together)
+  auth.service.ts ↔ auth.controller.ts    18 commits
+  user.model.ts   ↔ user.service.ts       11 commits
+  config.ts       ↔ .env.example           8 commits
+```
+
+Claude این رو می‌خونه و بدون باز کردن یه فایل می‌فهمه معماری چیه، کدوم فایل‌ها critical هستن، و کدوم‌ها با هم coupled هستن.
+
+---
+
 ## چطور کار می‌کنه / How It Works
 
 ```
+[ato init]
+    ↓
+  اسکن پروژه: stack، entry points، dependencies
+  آنالیز کد: import graph → hub files → export surface
+  آنالیز git: co-change clusters (90 days)
+  CONTEXT.md ← code intelligence graph
+  CLAUDE.md  ← standing instruction to auto-read focus file
+  settings.json ← UserPromptSubmit + Stop hooks
+    ↓
 [باز کردن Claude Code]
-        ↓
-UserPromptSubmit hook → ato go --quiet
-        ↓
-ato از git می‌خونه: modified files + recent commits + branch name
-        ↓
-.ato_focus_auto.md ساخته می‌شه
-        ↓
-CLAUDE.md به Claude می‌گه: این فایل رو بدون پرسیدن بخون
-        ↓
-[Claude فقط روی فایل‌های مرتبط کار می‌کنه]
-        ↓
-[Session تموم]
-        ↓
-Stop hook → ato sync → CONTEXT.md آپدیت + savings ثبت
+    ↓
+  UserPromptSubmit hook → ato go --quiet → .ato_focus_auto.md
+    ↓
+  CLAUDE.md: "if .ato_focus_auto.md exists, read it — no questions"
+    ↓
+[Claude می‌خونه CONTEXT.md: معماری + critical path + coupling]
+[Claude می‌خونه focus file: فقط فایل‌های مرتبط با کار الان]
+    ↓
+[کار با Claude — بدون exploration]
+    ↓
+  Stop hook → ato sync → CONTEXT.md آپدیت + savings ثبت
 ```
 
 فعالیت auto-focus رو می‌تونی live ببینی:
@@ -95,13 +131,13 @@ tail -f ~/.ato/run.log
 
 | دستور | کار |
 |---|---|
-| `ato init` | یه بار — setup کامل پروژه |
+| `ato init` | یه بار — code graph + hooks + CLAUDE.md |
 | `ato note "text"` | ثبت تصمیم مهم حین session |
 | `ato check` | وضعیت پروژه + context usage + savings |
 | `ato audit` | token budget per section |
 | `ato update` | آپدیت به آخرین نسخه |
 
-دستورات power (نیازی نیست بدونی، ولی وجود دارن):
+دستورات power:
 
 ```bash
 ato go                    # manual focus (auto runs on session start)
@@ -118,12 +154,12 @@ ato task add/done         # task tracking اختیاری
 
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v2.9.0 — my-project                       ║
+║  ATO v3.0.0 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
   ──────────────────────────────────────────────
-  ✓  CONTEXT.md      89 lines  ~534    lean ✓
+  ✓  CONTEXT.md      95 lines  ~570    lean ✓
   ✓  CLAUDE.md       17 lines  ~102    lean ✓
   ✓  Auto-sync       active  (Stop hook)
   ✓  Auto-focus      active  (UserPromptSubmit hook)
@@ -149,25 +185,9 @@ ato task add/done         # task tracking اختیاری
 
 ---
 
-## `ato audit` — بررسی token budget
-
-```
-Section                        Lines  Tokens  Share
-──────────────────────────────────────────────────────────
-Architecture snapshot             25    ~150   29%  ← trim
-Key dependencies                  14     ~84   16%
-Commands                          10     ~60   12%
-Hot files                          9     ~54   10%
-Identity                           6     ~36    7%
-──────────────────────────────────────────────────────────
-Total                             89    ~534
-```
-
----
-
 ## MCP Server Mode
 
-ato می‌تونه به عنوان MCP server اجرا بشه — Claude Code مستقیماً می‌تونه ato رو صدا بزنه:
+ato می‌تونه به عنوان MCP server اجرا بشه — Claude Code مستقیماً صداش می‌زنه:
 
 ```bash
 ato mcp install
@@ -175,7 +195,7 @@ ato mcp install
 # → Claude Code رو restart کن
 ```
 
-بعد Claude می‌تونه مستقیم از این tools استفاده کنه:
+Tools در دسترس Claude:
 `ato_focus` · `ato_sync` · `ato_note` · `ato_status` · `ato_doctor` · `ato_checkpoint`
 
 ---
