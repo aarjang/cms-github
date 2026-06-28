@@ -1252,6 +1252,15 @@ cmd_sync() {
   local lock_file="/tmp/.ato_session_$(basename "$PWD" | sed 's/[^a-zA-Z0-9]/_/g')"
   rm -f "$lock_file"
 
+  # Auto-commit CONTEXT.md and stats so changes persist across machines
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git add "$CONTEXT_FILE" "$LOCAL_STATS" 2>/dev/null || true
+    if ! git diff --cached --quiet 2>/dev/null; then
+      git commit -m "chore: auto-sync ato context [skip ci]" --no-verify 2>/dev/null && \
+        dim "  Auto-committed: CONTEXT.md + stats"
+    fi
+  fi
+
   # Compaction warning: if last sync was not today, compaction may have occurred
   local last_s today
   last_s=$(json_get "$LOCAL_STATS" "last_session" 2>/dev/null | cut -c1-10 || echo "")
