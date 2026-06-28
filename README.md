@@ -1,24 +1,66 @@
-# ato — AI Token Optimizer
 
-**کاهش ۷۰-۹۰٪ مصرف توکن در Claude Code**  
-**Reduce Claude Code token usage by 70–90% per session**
+<p align="center">
+  <pre align="center">
+   ___  ____  ___
+  / _ \/ ___||__ \
+ / /_\/\___ \  / /
+/ /_\ \___) |/ /
+\____/|____//_/   v3.2.0
+  </pre>
+</p>
+
+<p align="center">
+  <strong>AI Token Optimizer for Claude Code</strong><br/>
+  Reduce your Claude Code token usage by <strong>70–90%</strong> per session — automatically.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-3.2.0-blue?style=flat-square" alt="version"/>
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"/>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="platform"/>
+  <img src="https://img.shields.io/badge/shell-bash-orange?style=flat-square&logo=gnu-bash" alt="bash"/>
+  <img src="https://img.shields.io/badge/deps-zero-brightgreen?style=flat-square" alt="zero deps"/>
+</p>
+
+<p align="center">
+  🧠 Builds a <strong>code intelligence graph</strong> so Claude understands your project instantly &nbsp;·&nbsp;
+  🔗 <strong>Auto-wires hooks</strong> — zero copy-paste, zero manual steps &nbsp;·&nbsp;
+  💾 <strong>Persistent memory</strong> that survives context resets
+</p>
 
 ---
 
-## مشکل / The Problem
-
-وقتی Claude Code روی پروژه‌های بزرگ کار می‌کنه، هر session کل codebase رو می‌خونه:
-
-```
-بدون ato:
-  Claude میخونه: src/ + tests/ + configs = ~50,000 tokens
-  ولی task شما فقط به 2 فایل نیاز داشت = ~3,000 tokens
-  اتلاف: ~94%
-```
+## 🇬🇧 English
 
 ---
 
-## نصب / Install
+### ⚡ The Problem
+
+Every Claude Code session, Claude reads your entire codebase to understand your project:
+
+```
+❌ Without ato
+   Claude reads: src/ + tests/ + configs + node_modules hints = ~50,000 tokens
+   Your task needed: 2 files = ~3,000 tokens
+   Wasted: ~94% of your token budget
+
+✅ With ato
+   Claude reads: CONTEXT.md + focus file = ~2,000 tokens
+   Available for actual work: ~198,000 tokens
+   Saved: ~91%
+```
+
+| | Without ato | With ato |
+|---|---|---|
+| Session startup | ~50k tokens | ~2k tokens |
+| Claude reads | Entire codebase | Focused context only |
+| Architecture known | ❌ Has to explore | ✅ Pre-mapped |
+| Setup per session | Manual copy-paste | Fully automatic |
+| Survives context reset | ❌ Lost | ✅ DECISIONS.md |
+
+---
+
+### 📦 Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
@@ -27,256 +69,517 @@ source ~/.zshrc   # or ~/.bashrc
 
 ---
 
-## روند کار / Workflow
-
-دو مرحله‌ست. همین.
-
-### مرحله ۱ — یه بار توی هر پروژه
+### 🚀 Quick Start
 
 ```bash
-cd ~/projects/my-project
+# Step 1 — once per project
+cd ~/your-project
 ato init
-```
 
-پروژه رو اسکن می‌کنه، کد رو آنالیز می‌کنه، و همه چیز رو وایر می‌کنه:
-
-**Code Intelligence Graph** — داخل `CONTEXT.md` ذخیره می‌شه:
-- معماری پروژه (MVC layers, module structure)
-- Critical path — فایل‌هایی که بیشترین dependency دارن + API‌شون
-- Coupling map — فایل‌هایی که همیشه با هم تغییر می‌کنن (از git history)
-
-**Auto-focus hooks** — داخل `.claude/settings.json`:
-- `UserPromptSubmit` → `ato go --quiet` (focus قبل از هر session)
-- `Stop` → `ato sync` (sync بعد از هر session)
-
----
-
-### مرحله ۲ — هر session
-
-```bash
+# Step 2 — every session
 claude
 ```
 
-همین. دیگه هیچ.
+That's it. No copy-paste. No manual `ato go`. Just open Claude and type.
 
-- Claude معماری پروژه رو از اول می‌دونه
-- focus file خودکار ساخته و خونده می‌شه
-- بعد از session، sync خودکاره
-
-**بدون copy-paste. بدون `ato go`. فقط Claude رو باز کن و تایپ کن.**
-
-روی machine دیگه‌ای کار می‌کنی؟ فقط `git pull` بزن — context و stats خودکار sync می‌شن.
+> **Working on another machine?** Just `git pull` — context and memory sync automatically.
 
 ---
 
-## Code Intelligence Graph
+### 🔬 What `ato init` does
 
-```
+#### 🧠 Builds a Code Intelligence Graph → `CONTEXT.md`
+
+```markdown
 ## Architecture
-  controllers/     3 files   AuthController, UserController, OrderController
-  services/        5 files   AuthService, PaymentService, EmailService ...
-  models/          4 files   User, Order, Product, Session
-  middleware/      2 files
+  controllers/   3 files   AuthController, UserController, OrderController
+  services/      5 files   AuthService, PaymentService, EmailService ...
+  models/        4 files   User, Order, Product, Session
 
 ## Critical path (read these first)
    12  src/services/auth.ts
         exports: authenticateUser · validateToken · hashPassword
     9  src/lib/db.ts
         exports: getConnection · query · transaction
-    8  src/types/index.ts
-        exports: User · Order · ApiResponse · PaginatedResult
 
 ## Coupling map (change these together)
   auth.service.ts ↔ auth.controller.ts    18 commits
   user.model.ts   ↔ user.service.ts       11 commits
-  config.ts       ↔ .env.example           8 commits
 ```
 
-Claude این رو می‌خونه و بدون باز کردن یه فایل می‌فهمه معماری چیه، کدوم فایل‌ها critical هستن، و کدوم‌ها با هم coupled هستن.
+Claude reads this and immediately knows your architecture — **without opening a single file**.
+
+#### 🔗 Auto-wires Hooks → `.claude/settings.json`
+
+| Hook | Command | When |
+|---|---|---|
+| `UserPromptSubmit` | `ato go --quiet` | Before every session — auto-generates focus file |
+| `Stop` | `ato sync` | After every session — updates CONTEXT.md + auto-commits |
+
+#### 📋 `CLAUDE.md` — Standing Instruction
+
+Tells Claude to read `.ato_focus_auto.md` at session start — automatically, every time.
+
+#### 💾 `DECISIONS.md` — Persistent Memory
+
+A separate memory file that survives context resets (see below).
 
 ---
 
-## چطور کار می‌کنه / How It Works
+### 💾 Persistent Memory `ato mem`
+
+**The problem:** Claude Code context resets wipe out everything — decisions made, work in progress, gotchas discovered. You have to re-explain it all from scratch.
+
+**The solution:** `DECISIONS.md` — committed to git, auto-synced, loaded at every session start.
+
+```bash
+# Log a decision
+ato mem "decided to use Redis instead of Postgres for session storage"
+
+# Track work in progress
+ato mem --wip "auth middleware — 70% done, next: token refresh"
+
+# Add a gotcha / watch-out
+ato mem --warn "never touch bin/legacy-migrate.sh — breaks prod silently"
+
+# Mark WIP as complete
+ato mem --done "auth middleware"
+
+# See everything
+ato mem --list
+
+# Start fresh
+ato mem --clear
+```
+
+Your `DECISIONS.md` after the above:
+
+```markdown
+## Active work
+- [ ] auth middleware — 70% done, next: token refresh
+
+## Decisions
+- 2026-06-28  decided to use Redis instead of Postgres for session storage
+
+## Watch out
+- never touch bin/legacy-migrate.sh — breaks prod silently
+```
+
+After any context reset, Claude reads this and picks up exactly where you left off.
+
+---
+
+### 🔄 How It Works
 
 ```
-[ato init]
-    ↓
-  اسکن پروژه: stack، entry points، dependencies
-  آنالیز کد: import graph → hub files → export surface
-  آنالیز git: co-change clusters (90 days)
-  CONTEXT.md ← code intelligence graph
-  CLAUDE.md  ← standing instruction to auto-read focus file
-  settings.json ← UserPromptSubmit + Stop hooks
-    ↓
-[باز کردن Claude Code]
-    ↓
-  UserPromptSubmit hook → ato go --quiet → .ato_focus_auto.md
-    ↓
-  CLAUDE.md: "if .ato_focus_auto.md exists, read it — no questions"
-    ↓
-[Claude می‌خونه CONTEXT.md: معماری + critical path + coupling]
-[Claude می‌خونه focus file: فقط فایل‌های مرتبط با کار الان]
-    ↓
-[کار با Claude — بدون exploration]
-    ↓
-  Stop hook → ato sync → CONTEXT.md آپدیت + savings ثبت
-                      → git commit "chore: auto-sync ato context [skip ci]"
+┌─────────────────────────────────────────────────────────┐
+│  ato init  (once per project)                           │
+│                                                         │
+│  Scan project → analyze imports → git co-change        │
+│       ↓                                                 │
+│  CONTEXT.md      ← architecture + critical path         │
+│  DECISIONS.md    ← persistent memory (empty to start)  │
+│  CLAUDE.md       ← standing session instruction        │
+│  settings.json   ← UserPromptSubmit + Stop hooks       │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────────┐
+│  open claude  (every session)                           │
+│                                                         │
+│  UserPromptSubmit hook fires                            │
+│       ↓                                                 │
+│  ato go --quiet → .ato_focus_auto.md                   │
+│    contains: CONTEXT.md + DECISIONS.md + file contents  │
+│       ↓                                                 │
+│  CLAUDE.md: "read .ato_focus_auto.md — no questions"   │
+│       ↓                                                 │
+│  Claude starts with full context. No exploration.       │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────────┐
+│  session ends                                           │
+│                                                         │
+│  Stop hook → ato sync                                   │
+│    → CONTEXT.md updated                                 │
+│    → git commit "chore: auto-sync ato context [skip ci]"│
+│    → lock cleared for next session                      │
+└─────────────────────────────────────────────────────────┘
 ```
 
-فعالیت auto-focus رو می‌تونی live ببینی:
+Watch auto-focus activity live:
 ```bash
 tail -f ~/.ato/run.log
 ```
 
 ---
 
-## دستورات / Commands
-
-| دستور | کار |
-|---|---|
-| `ato init` | یه بار — code graph + hooks + CLAUDE.md + DECISIONS.md |
-| `ato mem "decision"` | ثبت تصمیم که context reset رو survive می‌کنه |
-| `ato note "text"` | ثبت تصمیم مهم حین session در CONTEXT.md |
-| `ato check` | وضعیت پروژه + context usage + savings |
-| `ato audit` | token budget per section |
-| `ato audit --reset` | ریست کردن آمار sessions |
-| `ato update` | آپدیت به آخرین نسخه |
-
-دستورات power:
-
-```bash
-ato go                    # manual focus (auto runs on session start)
-ato go auth               # focus روی یه topic مشخص
-ato go --budget 40k       # محدود کردن scope برای Pro plan
-ato audit --scope "*.ts"  # token cost یه مجموعه فایل
-ato mcp install           # ثبت به عنوان MCP server
-ato task add/done         # task tracking اختیاری
-```
-
----
-
-## `ato check` — وضعیت کامل
+### 📊 `ato check` — Health Dashboard
 
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v3.0.0 — my-project                       ║
+║  ATO v3.2.0 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
   ──────────────────────────────────────────────
-  ✓  CONTEXT.md      95 lines  ~570    lean ✓
-  ✓  CLAUDE.md       17 lines  ~102    lean ✓
-  ✓  Auto-sync       active  (Stop hook)
-  ✓  Auto-focus      active  (UserPromptSubmit hook)
+  ✓  CONTEXT.md       95 lines  ~570    lean ✓
+  ✓  CLAUDE.md        18 lines  ~108    lean ✓
+  ✓  DECISIONS.md     14 lines  ~84     lean ✓
+  ✓  Auto-sync        active  (Stop hook)
+  ✓  Auto-focus       active  (UserPromptSubmit hook)
+  ✓  Focus file       ~2k
 
   Available for work: ~166k / ~200k tokens (83% free)
 
   Session
   ──────────────────────────────────────────────
-  ██████░░░░░░░░░░░░░░░░░░  25%  safe to continue
+  ██████░░░░░░░░░░░░░░░░░░  26%  safe to continue
+  (estimate — for exact: /context inside Claude Code)
 
   Git
   ──────────────────────────────────────────────
   Branch          main
   Status          clean
-  Last commit     "fix: auth middleware" (2 hours ago)
+  Last commit     "feat: add payment integration" (2 hours ago)
 
   Savings  (estimate — based on project size vs. focus file size)
   ──────────────────────────────────────────────
-  Sessions        12
-  Saved           ~847k tokens  ≈ $2.54
+  Sessions        47
+  Saved           ~820k tokens  ≈ $2.46
   Last session    2026-06-28
 ```
 
-> **درباره اعداد savings:** این‌ها تخمین هستن، نه اندازه‌گیری دقیق. محاسبه اینطوره:
-> `saved = (همه سورس فایل‌ها) − (CONTEXT.md + focus file)`. در واقع Claude بدون ato هم لزوماً کل codebase رو نمی‌خونه — ولی ato مطمئن می‌شه که فقط چیز مرتبط رو می‌خونه.
+---
+
+### 📋 Commands Reference
+
+| Command | Description |
+|---|---|
+| `ato init` | Scan project, build code graph, wire hooks |
+| `ato mem "decision"` | Log a decision that survives context reset |
+| `ato mem --wip "text"` | Track work in progress |
+| `ato mem --done "text"` | Mark WIP item as complete |
+| `ato mem --warn "text"` | Add a gotcha / watch-out |
+| `ato mem --list` | Show all memory |
+| `ato note "text"` | Append a note to CONTEXT.md |
+| `ato go` | Manual focus (runs automatically on session start) |
+| `ato go auth` | Focus on a specific topic |
+| `ato check` | Full health dashboard — context + session + savings |
+| `ato audit` | Token budget breakdown per section |
+| `ato audit --reset` | Reset session stats |
+| `ato update` | Self-update to latest version |
+
+<details>
+<summary>⚙️ Power options</summary>
+
+```bash
+ato go --budget 40k       # trim scope for Claude Pro token limits
+ato audit --scope "*.ts"  # token cost of a specific file set
+ato mcp install           # register ato as MCP server in Claude Code
+ato task add "text"       # optional task tracking
+ato task done 1           # mark task complete
+tail -f ~/.ato/run.log    # watch auto-focus activity live
+```
+
+</details>
 
 ---
 
-## حافظه دائمی / Persistent Memory
+### 📈 Token Savings — Honest Numbers
 
-وقتی Claude Code history رو پاک می‌کنه یا context reset می‌شه، تصمیمات و کارهای نیمه‌تمام از دست می‌رن. `DECISIONS.md` این مشکل رو حل می‌کنه — جدا از `CONTEXT.md`، خودکار sync می‌شه، و بعد از هر reset Claude دوباره می‌خونتش.
+Savings are **estimates**, not exact measurements. The calculation:
+
+```
+saved = (all source files in project × ~6 tokens/line)
+      − (CONTEXT.md + DECISIONS.md + focus file overhead)
+```
+
+In practice, Claude without ato doesn't necessarily read your entire codebase — but ato ensures it reads *only* what's relevant, and starts with full architectural context. The real benefit is **faster, more accurate responses** with less back-and-forth exploration.
+
+Stats are stored in:
+- `.ato-stats.json` — this project
+- `~/.ato/stats.json` — all projects (aggregate)
+
+---
+
+### 📄 License
+
+MIT © [Arjang Mousavi](https://github.com/aarjang)
+
+---
+---
+
+## 🇮🇷 فارسی
+
+---
+
+### ⚡ مشکل
+
+هر بار که Claude Code شروع می‌کنه، کل codebase رو می‌خونه تا پروژه رو بفهمه:
+
+```
+❌ بدون ato
+   Claude می‌خونه: src/ + tests/ + configs = ~۵۰٬۰۰۰ توکن
+   task شما فقط نیاز داشت: ۲ فایل = ~۳٬۰۰۰ توکن
+   هدر رفته: ~۹۴٪ از budget توکن
+
+✅ با ato
+   Claude می‌خونه: CONTEXT.md + focus file = ~۲٬۰۰۰ توکن
+   موجود برای کار واقعی: ~۱۹۸٬۰۰۰ توکن
+   صرفه‌جویی: ~۹۱٪
+```
+
+| | بدون ato | با ato |
+|---|---|---|
+| شروع session | ~۵۰k توکن | ~۲k توکن |
+| Claude می‌خونه | کل codebase | فقط context مرتبط |
+| معماری شناخته‌شده | ❌ باید explore کنه | ✅ از قبل map شده |
+| تنظیم هر session | copy-paste دستی | کاملاً خودکار |
+| بعد از context reset | ❌ از دست رفته | ✅ DECISIONS.md |
+
+---
+
+### 📦 نصب
 
 ```bash
-ato mem "decided to use Redis instead of Postgres for session storage"
-ato mem --wip "auth middleware — 70% done, next: token refresh"
-ato mem --warn "never touch bin/legacy-migrate.sh — breaks prod silently"
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
+source ~/.zshrc   # یا ~/.bashrc
 ```
 
-بعد از هر session که context reset بشه، Claude این رو می‌خونه و از همون جایی که بودی ادامه می‌ده.
+---
 
+### 🚀 شروع سریع
+
+```bash
+# مرحله ۱ — یک بار در هر پروژه
+cd ~/your-project
+ato init
+
+# مرحله ۲ — هر session
+claude
 ```
+
+همین. بدون copy-paste. بدون `ato go` دستی. فقط Claude رو باز کن و تایپ کن.
+
+> **روی machine دیگه‌ای کار می‌کنی؟** فقط `git pull` بزن — context و memory خودکار sync می‌شن.
+
+---
+
+### 🔬 `ato init` چه کاری انجام می‌ده
+
+#### 🧠 Code Intelligence Graph می‌سازه → `CONTEXT.md`
+
+```markdown
+## Architecture
+  controllers/   ۳ فایل   AuthController, UserController, OrderController
+  services/      ۵ فایل   AuthService, PaymentService, EmailService ...
+  models/        ۴ فایل   User, Order, Product, Session
+
+## Critical path (اول اینا رو بخون)
+   ۱۲  src/services/auth.ts
+        exports: authenticateUser · validateToken · hashPassword
+    ۹  src/lib/db.ts
+        exports: getConnection · query · transaction
+
+## Coupling map (اینا رو با هم تغییر بده)
+  auth.service.ts ↔ auth.controller.ts    ۱۸ commit
+  user.model.ts   ↔ user.service.ts       ۱۱ commit
+```
+
+Claude این رو می‌خونه و فوری معماری پروژه رو می‌فهمه — **بدون باز کردن یک فایل**.
+
+#### 🔗 Hooks رو وایر می‌کنه → `.claude/settings.json`
+
+| Hook | دستور | کِی |
+|---|---|---|
+| `UserPromptSubmit` | `ato go --quiet` | قبل از هر session — focus file می‌سازه |
+| `Stop` | `ato sync` | بعد از هر session — CONTEXT.md آپدیت + auto-commit |
+
+#### 📋 `CLAUDE.md` — دستور دائمی
+
+به Claude می‌گه هر session `.ato_focus_auto.md` رو بخونه — خودکار، هر بار.
+
+#### 💾 `DECISIONS.md` — حافظه دائمی
+
+یه فایل memory مجزا که context reset رو survive می‌کنه (ببین پایین‌تر).
+
+---
+
+### 💾 حافظه دائمی `ato mem`
+
+**مشکل:** context reset در Claude Code همه چیز رو پاک می‌کنه — تصمیمات، کارهای نیمه‌تمام، مشکلات کشف‌شده. باید از اول همه چیز رو توضیح بدی.
+
+**راه‌حل:** `DECISIONS.md` — commit شده در git، خودکار sync، هر session لود می‌شه.
+
+```bash
+# ثبت یه تصمیم
+ato mem "تصمیم گرفتیم Redis بجای Postgres برای session storage استفاده کنیم"
+
+# ردیابی کار در جریان
+ato mem --wip "auth middleware — ۷۰٪ تموم، بعدی: token refresh"
+
+# اضافه کردن هشدار
+ato mem --warn "bin/legacy-migrate.sh رو دست نزن — prod رو خاموش می‌کنه"
+
+# تموم کردن WIP
+ato mem --done "auth middleware"
+
+# نمایش همه حافظه
+ato mem --list
+
+# پاک کردن همه
+ato mem --clear
+```
+
+`DECISIONS.md` بعد از دستورات بالا:
+
+```markdown
 ## Active work
-- [ ] auth middleware — 70% done, next: token refresh
+- [ ] auth middleware — ۷۰٪ تموم، بعدی: token refresh
 
 ## Decisions
-- 2026-06-28  Redis (not Postgres) for session storage — latency req
+- ۱۴۰۵-۰۴-۰۷  Redis بجای Postgres برای session storage
 
 ## Watch out
-- never touch bin/legacy-migrate.sh — breaks prod silently
+- bin/legacy-migrate.sh رو دست نزن — prod رو خاموش می‌کنه
 ```
 
-| دستور | کار |
+بعد از هر context reset، Claude این رو می‌خونه و دقیقاً از همون جایی که بودی ادامه می‌ده.
+
+---
+
+### 🔄 چطور کار می‌کنه
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  ato init  (یک بار در هر پروژه)                        │
+│                                                         │
+│  اسکن پروژه → آنالیز imports → git co-change          │
+│       ↓                                                 │
+│  CONTEXT.md      ← معماری + critical path              │
+│  DECISIONS.md    ← حافظه دائمی (اول خالی)             │
+│  CLAUDE.md       ← دستور دائمی session                 │
+│  settings.json   ← هوک‌های UserPromptSubmit + Stop      │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────────┐
+│  باز کردن claude  (هر session)                         │
+│                                                         │
+│  UserPromptSubmit hook فایر می‌شه                      │
+│       ↓                                                 │
+│  ato go --quiet → .ato_focus_auto.md                   │
+│    شامل: CONTEXT.md + DECISIONS.md + محتوای فایل‌ها    │
+│       ↓                                                 │
+│  CLAUDE.md: ".ato_focus_auto.md رو بخون — بدون سوال"  │
+│       ↓                                                 │
+│  Claude با context کامل شروع می‌کنه. بدون exploration. │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────────┐
+│  پایان session                                          │
+│                                                         │
+│  Stop hook → ato sync                                   │
+│    → CONTEXT.md آپدیت می‌شه                           │
+│    → git commit خودکار                                  │
+│    → lock برای session بعدی پاک می‌شه                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+فعالیت auto-focus رو live ببین:
+```bash
+tail -f ~/.ato/run.log
+```
+
+---
+
+### 📊 `ato check` — داشبورد سلامت
+
+```
+╔══════════════════════════════════════════════════╗
+║  ATO v3.2.0 — my-project                       ║
+╚══════════════════════════════════════════════════╝
+
+  Context
+  ──────────────────────────────────────────────
+  ✓  CONTEXT.md       ۹۵ خط   ~۵۷۰    lean ✓
+  ✓  CLAUDE.md        ۱۸ خط   ~۱۰۸    lean ✓
+  ✓  DECISIONS.md     ۱۴ خط   ~۸۴     lean ✓
+  ✓  Auto-sync        فعال  (Stop hook)
+  ✓  Auto-focus       فعال  (UserPromptSubmit hook)
+  ✓  Focus file       ~۲k
+
+  موجود برای کار: ~۱۶۶k / ~۲۰۰k توکن (۸۳٪ آزاد)
+
+  Session
+  ──────────────────────────────────────────────
+  ██████░░░░░░░░░░░░░░░░░░  ۲۶٪  ادامه بده
+
+  Git
+  ──────────────────────────────────────────────
+  Branch          main
+  Status          clean
+  آخرین commit   "feat: add payment integration" (۲ ساعت پیش)
+
+  صرفه‌جویی  (تخمین)
+  ──────────────────────────────────────────────
+  Sessions        ۴۷
+  صرفه‌جویی       ~۸۲۰k توکن  ≈ $۲.۴۶
+  آخرین session   ۱۴۰۵-۰۴-۰۷
+```
+
+---
+
+### 📋 مرجع دستورات
+
+| دستور | توضیح |
 |---|---|
-| `ato mem "decision"` | ثبت تصمیم با تاریخ |
-| `ato mem --wip "text"` | کار در جریان |
-| `ato mem --done "text"` | حذف WIP تموم‌شده |
-| `ato mem --warn "text"` | هشدار / gotcha |
+| `ato init` | اسکن پروژه، ساخت code graph، وایر کردن hooks |
+| `ato mem "decision"` | ثبت تصمیم که context reset رو survive می‌کنه |
+| `ato mem --wip "text"` | ردیابی کار در جریان |
+| `ato mem --done "text"` | تموم کردن WIP |
+| `ato mem --warn "text"` | اضافه کردن هشدار / gotcha |
 | `ato mem --list` | نمایش همه حافظه |
-| `ato mem --clear` | پاک کردن همه |
+| `ato note "text"` | اضافه کردن یادداشت به CONTEXT.md |
+| `ato go` | focus دستی (خودکار اجرا می‌شه) |
+| `ato go auth` | focus روی topic مشخص |
+| `ato check` | داشبورد کامل سلامت |
+| `ato audit` | breakdown budget توکن هر بخش |
+| `ato audit --reset` | ریست آمار sessions |
+| `ato update` | آپدیت به آخرین نسخه |
 
-`DECISIONS.md` توسط `ato sync` بعد از هر session خودکار commit و push می‌شه — روی هر machine‌ای `git pull` کافیه.
-
----
-
-## بهینه‌سازی توکن / Token Optimizations
-
-### Focus file با محتوای فایل‌ها
-
-`ato go` محتوای فایل‌های مرتبط رو (حداکثر ۸۰ خط هر فایل) مستقیم داخل focus file می‌ذاره. Claude از اول کد رو می‌بینه — بدون نیاز به tool call برای خوندن فایل‌ها.
-
-```
-## File contents (first 80 lines each — ask to see more):
-
-### `src/services/auth.ts`  (142 lines)
-```ts
-export async function authenticateUser(email: string, password: string) {
-  ...
-}
-... (62 more lines — ask to see them)
-```
-```
-
-هر tool call که avoid می‌شه = **~500 توکن** صرفه‌جویی. روی ۱۰ پیام = ~5k توکن.
-
-### Focus file size warning
-
-```
-✓  Focus file       ~2k        ← lean
-!  Focus file       ~8k    ⚠ large — run: ato go --budget 40k
-```
-
-`ato check` اندازه focus file رو نشون می‌ده. بزرگ‌تر از 3k = هشدار.
-
-> **آمار در:** `.ato-stats.json` (این پروژه) و `~/.ato/stats.json` (همه پروژه‌ها)
-
----
-
-## MCP Server Mode
-
-ato می‌تونه به عنوان MCP server اجرا بشه — Claude Code مستقیماً صداش می‌زنه:
+<details>
+<summary>⚙️ گزینه‌های پیشرفته</summary>
 
 ```bash
-ato mcp install
-# → .claude/settings.json رو آپدیت می‌کنه
-# → Claude Code رو restart کن
+ato go --budget 40k       # محدود کردن scope برای Claude Pro
+ato audit --scope "*.ts"  # هزینه توکن یه مجموعه فایل
+ato mcp install           # ثبت به عنوان MCP server
+ato task add "text"       # task tracking اختیاری
+ato task done 1           # تموم کردن task
+tail -f ~/.ato/run.log    # مشاهده live فعالیت auto-focus
 ```
 
-Tools در دسترس Claude:
-`ato_focus` · `ato_sync` · `ato_note` · `ato_status` · `ato_doctor` · `ato_checkpoint`
+</details>
 
 ---
 
-## مجوز / License
+### 📈 صرفه‌جویی توکن — اعداد واقعی
 
-MIT — [Arjang Mousavi](https://github.com/aarjang)
+صرفه‌جویی‌ها **تخمین** هستن، نه اندازه‌گیری دقیق. محاسبه:
+
+```
+صرفه‌جویی = (همه فایل‌های سورس پروژه × ~۶ توکن/خط)
+           − (CONTEXT.md + DECISIONS.md + focus file)
+```
+
+در عمل، Claude بدون ato لزوماً کل codebase رو نمی‌خونه — ولی ato مطمئن می‌شه فقط چیز مرتبط خونده می‌شه، و با context معماری کامل شروع می‌کنه. سود واقعی **پاسخ‌های سریع‌تر و دقیق‌تر** با کمتر exploration هست.
+
+آمار ذخیره می‌شه در:
+- `.ato-stats.json` — این پروژه
+- `~/.ato/stats.json` — همه پروژه‌ها (کلی)
+
+---
+
+### 📄 مجوز
+
+MIT © [Arjang Mousavi](https://github.com/aarjang)
