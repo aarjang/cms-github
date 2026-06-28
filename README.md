@@ -29,7 +29,7 @@ source ~/.zshrc   # or ~/.bashrc
 
 ## روند کار / Workflow
 
-سه مرحله‌ست. همین.
+دو مرحله‌ست. همین.
 
 ### مرحله ۱ — یه بار توی هر پروژه
 
@@ -38,91 +38,95 @@ cd ~/projects/my-project
 ato init
 ```
 
-پروژه رو اسکن می‌کنه و `CONTEXT.md` رو با داده‌های واقعی پر می‌کنه:
-- Stack، entry points، ساختار پوشه‌ها
-- Hot files — فایل‌هایی که بیشترین تغییر رو داشتن
-- Commands، env vars، stop-hook برای auto-sync
-
-اگه `CONTEXT.md` قبلاً وجود داشته باشه، می‌پرسه می‌خوای regenerate کنی یا نه.
+پروژه رو اسکن می‌کنه و همه چیز رو وایر می‌کنه:
+- `CONTEXT.md` با داده‌های واقعی (stack، entry points، hot files)
+- `CLAUDE.md` با دستورالعمل auto-focus
+- دو hook در `.claude/settings.json`:
+  - **UserPromptSubmit** → `ato go --quiet` (focus قبل از هر session)
+  - **Stop** → `ato sync` (sync بعد از هر session)
 
 ---
 
-### مرحله ۲ — قبل از هر session با Claude
+### مرحله ۲ — هر session
 
 ```bash
-ato go
+claude
 ```
 
-ato از git می‌خونه و تشخیص می‌ده الان روی چی کار می‌کنی:
-- فایل‌های modified در `git status`
-- فایل‌هایی که در ۷ روز اخیر تغییر کردن
-- نام branch برای تشخیص area
+همین. دیگه هیچ.
 
-یه فایل `.ato_focus_auto.md` می‌سازه. **این رو اول بده به Claude:**
+- `ato go --quiet` خودکار اجرا می‌شه
+- Claude فایل focus رو خودکار می‌خونه
+- فقط روی فایل‌های مرتبط با کار الان کار می‌کنه
+- بعد از session، sync خودکاره
 
-```
-Read .ato_focus_auto.md and follow the session rules inside it.
-```
+**بدون copy-paste. بدون `ato go`. فقط Claude رو باز کن و تایپ کن.**
 
-Claude فقط روی همون فایل‌ها focus می‌کنه — نه کل codebase.
+---
 
-خروجی `ato go`:
+## چطور کار می‌کنه / How It Works
 
 ```
-✓ Auto-focused: current changes
+[باز کردن Claude Code]
+        ↓
+UserPromptSubmit hook → ato go --quiet
+        ↓
+ato از git می‌خونه: modified files + recent commits + branch name
+        ↓
+.ato_focus_auto.md ساخته می‌شه
+        ↓
+CLAUDE.md به Claude می‌گه: این فایل رو بدون پرسیدن بخون
+        ↓
+[Claude فقط روی فایل‌های مرتبط کار می‌کنه]
+        ↓
+[Session تموم]
+        ↓
+Stop hook → ato sync → CONTEXT.md آپدیت + savings ثبت
+```
 
-→ Files in scope:
-    src/auth.ts       (142 lines)
-    src/middleware.ts  (89 lines)
-    tests/auth.test.ts (61 lines)
-
-  Startup cost: CONTEXT ~534 + CLAUDE.md ~102 + focus file ~756 = ~1k tokens
-  Available for work: ~165k / ~200k tokens
-
-→ Paste into Claude Code:
-
-    Read .ato_focus_auto.md and follow the session rules inside it.
+فعالیت auto-focus رو می‌تونی live ببینی:
+```bash
+tail -f ~/.ato/run.log
 ```
 
 ---
 
-### مرحله ۳ — بعد از session
-
-هیچ کاری نکن. stop-hook خودکار `ato sync` می‌زنه:
-- CONTEXT.md آپدیت می‌شه
-- savings ثبت می‌شه
-
----
-
-## دستورات اصلی / Commands
+## دستورات / Commands
 
 | دستور | کار |
 |---|---|
-| `ato init` | یه بار — setup پروژه |
-| `ato go` | قبل از هر session |
+| `ato init` | یه بار — setup کامل پروژه |
 | `ato note "text"` | ثبت تصمیم مهم حین session |
 | `ato check` | وضعیت پروژه + context usage + savings |
 | `ato audit` | token budget per section |
 | `ato update` | آپدیت به آخرین نسخه |
 
+دستورات power (نیازی نیست بدونی، ولی وجود دارن):
+
+```bash
+ato go                    # manual focus (auto runs on session start)
+ato go auth               # focus روی یه topic مشخص
+ato go --budget 40k       # محدود کردن scope برای Pro plan
+ato audit --scope "*.ts"  # token cost یه مجموعه فایل
+ato mcp install           # ثبت به عنوان MCP server
+ato task add/done         # task tracking اختیاری
+```
+
 ---
 
 ## `ato check` — وضعیت کامل
 
-```bash
-ato check
-```
-
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v2.7.0 — my-project                       ║
+║  ATO v2.9.0 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
   ──────────────────────────────────────────────
   ✓  CONTEXT.md      89 lines  ~534    lean ✓
   ✓  CLAUDE.md       17 lines  ~102    lean ✓
-  ✓  Stop-hook       active
+  ✓  Auto-sync       active  (Stop hook)
+  ✓  Auto-focus      active  (UserPromptSubmit hook)
 
   Available for work: ~166k / ~200k tokens (83% free)
 
@@ -147,10 +151,6 @@ ato check
 
 ## `ato audit` — بررسی token budget
 
-```bash
-ato audit
-```
-
 ```
 Section                        Lines  Tokens  Share
 ──────────────────────────────────────────────────────────
@@ -161,33 +161,6 @@ Hot files                          9     ~54   10%
 Identity                           6     ~36    7%
 ──────────────────────────────────────────────────────────
 Total                             89    ~534
-```
-
-sections بزرگ رو شناسایی می‌کنه تا بدونی کجا trim کنی.
-
----
-
-## گزینه‌های پیشرفته / Power Options
-
-```bash
-# focus روی یه topic مشخص
-ato go auth
-
-# محدود کردن scope برای Pro plan
-ato go --budget 40k
-
-# ثبت تصمیم که بعد از compaction باقی بمونه
-ato note "decided to use optimistic locking"
-
-# token cost یه مجموعه فایل
-ato audit --scope "src/**/*.ts"
-
-# ثبت ato به عنوان MCP server (Claude مستقیم صداش می‌زنه)
-ato mcp install
-
-# task tracking اختیاری
-ato task add "fix login bug"
-ato task done 1
 ```
 
 ---
