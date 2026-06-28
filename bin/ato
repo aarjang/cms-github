@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="3.1.0"
+VERSION="3.2.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -1059,6 +1059,11 @@ _auto_focus() {
     echo ""
     echo "## Context (read this first):"
     cat "$CONTEXT_FILE"
+    if [[ -f "$DECISIONS_FILE" ]] && [[ $(wc -l < "$DECISIONS_FILE") -gt 12 ]]; then
+      echo ""
+      echo "## Memory (decisions + active work):"
+      cat "$DECISIONS_FILE"
+    fi
     echo ""
     echo "---"
     echo "## Auto-detected work area: $focus_area"
@@ -1132,6 +1137,82 @@ _auto_focus() {
 
 # ─── Commands ─────────────────────────────────────────────────────────
 
+cmd_mem() {
+  local flag="${1:-}"
+  local text="${2:-}"
+
+  if [[ "$flag" == "--list" || -z "$flag" ]]; then
+    [[ ! -f "$DECISIONS_FILE" ]] && { warn "No memory yet — run: ato init"; return; }
+    cat "$DECISIONS_FILE"
+    return
+  fi
+
+  if [[ "$flag" == "--clear" ]]; then
+    [[ ! -f "$DECISIONS_FILE" ]] && { error "DECISIONS.md not found — run: ato init"; exit 1; }
+    printf "Clear all memory? (y/N) "
+    local answer
+    read -r answer </dev/tty 2>/dev/null || answer="n"
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+      local project
+      project="$(basename "$PWD")"
+      _create_decisions_file "$project"
+      success "Memory cleared"
+    else
+      info "Cancelled"
+    fi
+    return
+  fi
+
+  [[ ! -f "$DECISIONS_FILE" ]] && { error "DECISIONS.md not found — run: ato init"; exit 1; }
+
+  if [[ "$flag" != "--wip" && "$flag" != "--done" && "$flag" != "--warn" ]]; then
+    text="$flag"
+    flag="--decision"
+  fi
+
+  [[ -z "$text" ]] && { error "Usage: ato mem [--wip|--warn|--done] \"text\""; exit 1; }
+
+  local today
+  today=$(date +%Y-%m-%d)
+
+  case "$flag" in
+    --decision)
+      awk -v today="$today" -v text="$text" '
+        /^## Decisions/ { print; print "- " today "  " text; next }
+        { print }
+      ' "$DECISIONS_FILE" > "$DECISIONS_FILE.tmp" && mv "$DECISIONS_FILE.tmp" "$DECISIONS_FILE"
+      success "Decision saved: $text"
+      ;;
+    --wip)
+      awk -v text="$text" '
+        /^## Active work/ { print; print "- [ ] " text; next }
+        { print }
+      ' "$DECISIONS_FILE" > "$DECISIONS_FILE.tmp" && mv "$DECISIONS_FILE.tmp" "$DECISIONS_FILE"
+      success "WIP added: $text"
+      ;;
+    --done)
+      awk -v text="$text" '
+        /^- \[ \]/ && index($0, text) { next }
+        { print }
+      ' "$DECISIONS_FILE" > "$DECISIONS_FILE.tmp" && mv "$DECISIONS_FILE.tmp" "$DECISIONS_FILE"
+      success "Removed from active work: $text"
+      ;;
+    --warn)
+      awk -v text="$text" '
+        /^## Watch out/ { print; print "- " text; next }
+        { print }
+      ' "$DECISIONS_FILE" > "$DECISIONS_FILE.tmp" && mv "$DECISIONS_FILE.tmp" "$DECISIONS_FILE"
+      success "Watch-out saved: $text"
+      ;;
+  esac
+
+  local lines
+  lines=$(wc -l < "$DECISIONS_FILE" | tr -d ' ')
+  if [[ "$lines" -gt 50 ]]; then
+    warn "DECISIONS.md is $lines lines — getting large. Consider cleaning up old items."
+  fi
+}
+
 cmd_init() {
   local project="${1:-$(basename "$PWD")}"
   header "Initializing ATO v${VERSION} — $project"
@@ -1168,6 +1249,12 @@ cmd_init() {
       _create_minimal "$CLAUDE_FILE" "$project"
     fi
     success "Created $CLAUDE_FILE"
+  fi
+
+  # DECISIONS.md
+  if [[ ! -f "$DECISIONS_FILE" ]]; then
+    _create_decisions_file "$project"
+    success "DECISIONS.md created — use: ato mem \"decision\""
   fi
 
   json_init_local "$project"
@@ -1264,7 +1351,7 @@ cmd_sync() {
 
   # Auto-commit CONTEXT.md and stats so changes persist across machines
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git add "$CONTEXT_FILE" "$LOCAL_STATS" 2>/dev/null || true
+    git add "$CONTEXT_FILE" "$LOCAL_STATS" "$DECISIONS_FILE" 2>/dev/null || true
     if ! git diff --cached --quiet 2>/dev/null; then
       git commit -m "chore: auto-sync ato context [skip ci]" --no-verify 2>/dev/null && \
         dim "  Auto-committed: CONTEXT.md + stats"
@@ -1834,6 +1921,24 @@ cmd_update() {
 }
 
 # ─── Minimal file creator (fallback: no templates dir) ────────────────
+_create_decisions_file() {
+  local project="${1:-$(basename "$PWD")}"
+  cat > "$DECISIONS_FILE" << EOF
+# DECISIONS — $project
+<!-- Auto-loaded at session start. Keep under 50 lines. -->
+<!-- ato mem "decision"    → log a decision with date  -->
+<!-- ato mem --wip "text"  → add work-in-progress item -->
+<!-- ato mem --done "text" → remove matching WIP item  -->
+<!-- ato mem --warn "text" → add a watch-out / gotcha  -->
+
+## Active work
+
+## Decisions
+
+## Watch out
+EOF
+}
+
 _create_minimal() {
   local file="$1" project="$2"
   case "$file" in
@@ -1849,17 +1954,7 @@ _create_minimal() {
 <!-- ato add "task description" creates these automatically -->
 EOF
     ;;
-    "DECISIONS.md") cat > "$file" << EOF
-# DECISIONS — $project
-<!-- Why things are the way they are. -->
-
-### DEC-001 [Title]
-- **Date:** $(date +%Y-%m-%d)
-- **Decision:** [what was decided]
-- **Rationale:** [why]
-- **Alternatives rejected:** [what else was considered]
-EOF
-    ;;
+    "DECISIONS.md") _create_decisions_file "$project" ;;
     "CLAUDE.md") cat > "$file" << EOF
 # CLAUDE.md — $project
 <!-- Claude Code reads this automatically at the start of every session -->
@@ -2361,6 +2456,18 @@ cmd_check() {
     echo -e "$cl_tag"
   fi
 
+  if [[ -f "$DECISIONS_FILE" ]]; then
+    local dec_lines dec_tok
+    dec_lines=$(wc -l < "$DECISIONS_FILE" | tr -d ' ')
+    dec_tok=$(( dec_lines * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + dec_tok ))
+    local dec_tag
+    [[ $dec_lines -gt 50 ]] && { dec_tag="${YELLOW}⚠ trim${RESET}"; issues=$(( issues+1 )); } \
+                             || dec_tag="${GREEN}lean ✓${RESET}"
+    printf "  ${GREEN}✓${RESET}  %-16s %3d lines  ~%-5s  " "DECISIONS.md" "$dec_lines" "$(fmt_tokens $dec_tok)"
+    echo -e "$dec_tag"
+  fi
+
   if [[ -d ".claude/memory" ]]; then
     local mem_lines
     mem_lines=$(find ".claude/memory" -type f 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}') || mem_lines=0
@@ -2520,9 +2627,16 @@ cmd_help() {
   echo ""
   printf "  ${GREEN}%-22s${RESET} %s\n" "init [name]"   "Setup: CONTEXT.md + CLAUDE.md + auto-focus hook"
   printf "  ${GREEN}%-22s${RESET} %s\n" "note \"text\""  "Save a decision to CONTEXT.md (survives compaction)"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "mem \"decision\"" "Log a decision that survives context reset"
   printf "  ${GREEN}%-22s${RESET} %s\n" "check"         "Project health + context usage + savings"
   printf "  ${GREEN}%-22s${RESET} %s\n" "audit"         "Token budget per section + CLAUDE.md size"
   printf "  ${GREEN}%-22s${RESET} %s\n" "update"        "Self-update to latest version"
+  echo ""
+  echo -e "  ${DIM}Memory subcommands:${RESET}"
+  echo -e "  ${DIM}  ato mem --wip \"text\"     Track work in progress${RESET}"
+  echo -e "  ${DIM}  ato mem --done \"text\"    Mark WIP as complete${RESET}"
+  echo -e "  ${DIM}  ato mem --warn \"text\"    Add a gotcha / watch-out${RESET}"
+  echo -e "  ${DIM}  ato mem --list           Show all memory${RESET}"
   echo ""
   echo -e "  ${DIM}Power options:${RESET}"
   echo -e "  ${DIM}  ato go [topic]        Manual focus (auto runs on session start)${RESET}"
@@ -2545,6 +2659,7 @@ main() {
     check)          cmd_check ;;           # merged: status+doctor+checkpoint
     audit)          cmd_audit "$@" ;;      # merged: trim+slim+scope+reset
     update)         cmd_update ;;
+    mem)            cmd_mem "$@" ;;
     sync)           cmd_sync ;;
     mcp)            cmd_mcp "$@" ;;
     task)                                  # ato task add/done
