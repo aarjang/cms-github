@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ato — AI Token Optimizer for Claude Code
-# Reduces token usage by 70-90% per session
+# Reduces repeated codebase exploration in Claude Code sessions
 # https://github.com/aarjang/ato
 
 set -euo pipefail
 
-VERSION="3.4.1"
+VERSION="3.4.2"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -2668,7 +2668,7 @@ cmd_audit() {
 cmd_help() {
   echo ""
   echo -e "${BOLD}ato v${VERSION}${RESET} — AI Token Optimizer for Claude Code"
-  echo -e "${DIM}Reduce Claude Code token usage 70-90% per session.${RESET}"
+  echo -e "${DIM}Reduce repeated codebase exploration in Claude Code sessions.${RESET}"
   echo ""
   echo -e "${BOLD}WORKFLOW${RESET}"
   echo ""
