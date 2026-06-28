@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="3.2.0"
+VERSION="3.3.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -799,6 +799,15 @@ _ensure_focus_instruction() {
 
 # ─── Hook setup ───────────────────────────────────────────────────────
 
+_is_wsl() {
+  grep -qi "microsoft\|wsl" /proc/version 2>/dev/null
+}
+
+# Returns "wsl " prefix when running inside WSL (hooks run on Windows host)
+_hook_prefix() {
+  _is_wsl && echo "wsl " || echo ""
+}
+
 _setup_hook() {
   [[ ! -d ".git" ]] && return
 
@@ -806,8 +815,13 @@ _setup_hook() {
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
 
+  local prefix
+  prefix=$(_hook_prefix)
+  local cmd_focus="${prefix}ato go --quiet"
+  local cmd_sync="${prefix}ato sync"
+
   if [[ ! -f "$settings_file" ]]; then
-    cat > "$settings_file" << 'HOOKEOF'
+    cat > "$settings_file" << HOOKEOF
 {
   "hooks": {
     "UserPromptSubmit": [
@@ -816,7 +830,7 @@ _setup_hook() {
         "hooks": [
           {
             "type": "command",
-            "command": "ato go --quiet"
+            "command": "$cmd_focus"
           }
         ]
       }
@@ -827,7 +841,7 @@ _setup_hook() {
         "hooks": [
           {
             "type": "command",
-            "command": "ato sync"
+            "command": "$cmd_sync"
           }
         ]
       }
@@ -836,8 +850,9 @@ _setup_hook() {
 }
 HOOKEOF
     success "Claude Code hooks installed:"
-    dim "  UserPromptSubmit → ato go --quiet  (auto-focuses on session start)"
-    dim "  Stop             → ato sync        (auto-syncs after each session)"
+    dim "  UserPromptSubmit → $cmd_focus  (auto-focuses on session start)"
+    dim "  Stop             → $cmd_sync        (auto-syncs after each session)"
+    [[ -n "$prefix" ]] && info "WSL detected — hooks use 'wsl ato' prefix for Windows Claude Code"
     return
   fi
 
@@ -845,29 +860,29 @@ HOOKEOF
 
   if ! grep -q "ato sync" "$settings_file" 2>/dev/null; then
     warn "Existing .claude/settings.json found — add Stop hook manually:"
-    dim '  "Stop": [{"matcher":"","hooks":[{"type":"command","command":"ato sync"}]}]'
+    dim "  \"Stop\": [{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"$cmd_sync\"}]}]"
   fi
 
   if ! grep -q "ato go" "$settings_file" 2>/dev/null; then
     # Inject UserPromptSubmit before the first "hooks" key or closing brace
     if grep -q '"hooks"' "$settings_file" 2>/dev/null; then
-      awk '
+      awk -v cmd="$cmd_focus" '
         /"hooks"[[:space:]]*:/ && !done {
-          print "    \"UserPromptSubmit\": [{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"ato go --quiet\"}]}],"
+          print "    \"UserPromptSubmit\": [{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"" cmd "\"}]}],"
           done=1
         }
         { print }
       ' "$settings_file" > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
     else
-      awk '
+      awk -v cmd="$cmd_focus" '
         /^\}[[:space:]]*$/ && !done {
-          print "  ,\"hooks\":{\"UserPromptSubmit\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"ato go --quiet\"}]}]}"
+          print "  ,\"hooks\":{\"UserPromptSubmit\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"" cmd "\"}]}]}"
           done=1
         }
         { print }
       ' "$settings_file" > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
     fi
-    success "Added UserPromptSubmit hook → ato go --quiet"
+    success "Added UserPromptSubmit hook → $cmd_focus"
     updated=$(( updated + 1 ))
   fi
 
@@ -1271,10 +1286,16 @@ cmd_init() {
   echo -e "  ${GREEN}${BOLD}✓ Done!${RESET}"
   echo ""
   echo -e "  ${BOLD}Next steps:${RESET}"
-  dim "  1. Review CONTEXT.md — fill in Anti-patterns + any missing info"
+  dim "  1. Review CONTEXT.md — fill in any missing info"
   dim "  2. Run: claude"
   dim "     ato auto-focuses your session — just start typing"
   dim "  3. After each session, CONTEXT.md is updated automatically"
+  if _is_wsl; then
+    echo ""
+    info "WSL tip: open your project from Windows path for best Claude Code compatibility:"
+    dim "  cd /mnt/c/Users/\$USER/projects/$(basename "$PWD")"
+    dim "  Hooks are set to 'wsl ato ...' so Claude Code Desktop can call them"
+  fi
   echo ""
 }
 

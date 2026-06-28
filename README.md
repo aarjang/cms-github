@@ -5,7 +5,7 @@
   / _ \/ ___||__ \
  / /_\/\___ \  / /
 / /_\ \___) |/ /
-\____/|____//_/   v3.2.0
+\____/|____//_/   v3.3.0
   </pre>
 </p>
 
@@ -15,9 +15,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.2.0-blue?style=flat-square" alt="version"/>
+  <img src="https://img.shields.io/badge/version-3.3.0-blue?style=flat-square" alt="version"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"/>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="platform"/>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey?style=flat-square" alt="platform"/>
   <img src="https://img.shields.io/badge/shell-bash-orange?style=flat-square&logo=gnu-bash" alt="bash"/>
   <img src="https://img.shields.io/badge/deps-zero-brightgreen?style=flat-square" alt="zero deps"/>
 </p>
@@ -302,6 +302,39 @@ Stats are stored in:
 
 ---
 
+### 🪟 Windows Support
+
+ato is a Bash script — it does not run natively on PowerShell or CMD. Windows support is via WSL2.
+
+| Environment | Status | Notes |
+|---|---|---|
+| **WSL2** | ✅ Full support | Recommended for Windows |
+| **Git Bash** | ⚠️ Partial | Core commands work, hooks may not |
+| **PowerShell / CMD** | ❌ Not supported | Bash required |
+| **macOS** | ✅ Full support | Primary platform |
+| **Linux** | ✅ Full support | |
+
+#### Setup on Windows (WSL2)
+
+```bash
+# 1. Install WSL2 (PowerShell as Administrator)
+wsl --install
+
+# 2. Inside WSL, install ato
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
+source ~/.bashrc
+
+# 3. Work on projects via Windows path (accessible to both WSL and Windows)
+cd /mnt/c/Users/$USER/projects/my-project
+ato init
+```
+
+`ato init` automatically detects WSL and sets hooks to `wsl ato go --quiet` and `wsl ato sync` so Claude Code Desktop for Windows can call them correctly.
+
+> **Project location matters:** Keep projects under `/mnt/c/...` (Windows filesystem), not `~/projects` (WSL filesystem). Claude Code Desktop can only open Windows paths.
+
+---
+
 ### 📄 License
 
 MIT © [Arjang Mousavi](https://github.com/aarjang)
@@ -577,6 +610,39 @@ tail -f ~/.ato/run.log    # مشاهده live فعالیت auto-focus
 آمار ذخیره می‌شه در:
 - `.ato-stats.json` — این پروژه
 - `~/.ato/stats.json` — همه پروژه‌ها (کلی)
+
+---
+
+### 🪟 پشتیبانی از ویندوز
+
+ato یه Bash script هست — روی PowerShell یا CMD کار نمی‌کنه. پشتیبانی ویندوز از طریق WSL2 هست.
+
+| محیط | وضعیت | توضیح |
+|---|---|---|
+| **WSL2** | ✅ پشتیبانی کامل | توصیه‌شده برای ویندوز |
+| **Git Bash** | ⚠️ ناقص | دستورات اصلی کار می‌کنن، hooks شاید نه |
+| **PowerShell / CMD** | ❌ پشتیبانی نمی‌شه | Bash لازمه |
+| **macOS** | ✅ پشتیبانی کامل | Platform اصلی |
+| **Linux** | ✅ پشتیبانی کامل | |
+
+#### راه‌اندازی روی ویندوز (WSL2)
+
+```bash
+# ۱. نصب WSL2 (PowerShell به عنوان Administrator)
+wsl --install
+
+# ۲. داخل WSL، نصب ato
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
+source ~/.bashrc
+
+# ۳. روی پروژه‌ها از طریق path ویندوز کار کن
+cd /mnt/c/Users/$USER/projects/my-project
+ato init
+```
+
+`ato init` به‌صورت خودکار WSL رو detect می‌کنه و hooks رو با prefix `wsl` می‌نویسه تا Claude Code Desktop بتونه اونها رو صدا بزنه.
+
+> **مکان پروژه مهمه:** پروژه‌ها رو زیر `/mnt/c/...` نگه‌دار (filesystem ویندوز)، نه `~/projects` (filesystem WSL). Claude Code Desktop فقط path‌های ویندوز رو می‌تونه باز کنه.
 
 ---
 
