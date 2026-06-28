@@ -757,10 +757,6 @@ $cochange_section
 ## Recent activity
 $git_log
 
-## Anti-patterns
-<!-- Fill in as you discover footguns in this codebase — Claude will respect them -->
-- [none yet — add constraints here after your first session]
-
 ## Session notes
 <!-- Auto-updated by ato sync -->
 Last session: [none yet]
@@ -1085,6 +1081,20 @@ _auto_focus() {
     git log --since="14 days ago" --oneline -- $all_focus_files 2>/dev/null | \
       head -5 | awk '{print "  " $0}' || echo "  [none]"
     echo ""
+    echo "---"
+    echo "## File contents (first 80 lines each — ask to see more):"
+    echo ""
+    while IFS= read -r f; do
+      [[ -z "$f" || ! -f "$f" ]] && continue
+      local total_lines
+      total_lines=$(wc -l < "$f" 2>/dev/null | tr -d ' ' || echo 0)
+      echo "### \`$f\`  ($total_lines lines)"
+      echo '```'
+      head -80 "$f"
+      [[ "$total_lines" -gt 80 ]] && echo "... ($(( total_lines - 80 )) more lines — ask to see them)"
+      echo '```'
+      echo ""
+    done <<< "$all_focus_files"
     echo "---"
     echo "## Session rules:"
     echo "1. Only read files listed above — do NOT explore the rest of the codebase"
@@ -2388,7 +2398,15 @@ cmd_check() {
   printf "  %s\n" "$(printf '─%.0s' {1..46})"
 
   local focus_tokens=0
-  [[ -f ".ato_focus_auto.md" ]] && focus_tokens=$(( $(wc -l < ".ato_focus_auto.md") * TOKENS_PER_LINE ))
+  if [[ -f ".ato_focus_auto.md" ]]; then
+    focus_tokens=$(( $(wc -l < ".ato_focus_auto.md") * TOKENS_PER_LINE ))
+    if [[ $focus_tokens -gt 3000 ]]; then
+      printf "  ${YELLOW}!${RESET}  %-16s ~%s  ${YELLOW}⚠ large — run: ato go --budget 40k${RESET}\n" \
+        "Focus file" "$(fmt_tokens $focus_tokens)"
+    else
+      printf "  ${GREEN}✓${RESET}  %-16s ~%s\n" "Focus file" "$(fmt_tokens $focus_tokens)"
+    fi
+  fi
   local conversation_est=$(( 20 * 800 ))
   local total_est=$(( RESERVED + startup_tokens + focus_tokens + conversation_est ))
   [[ $total_est -gt $WINDOW ]] && total_est=$WINDOW
