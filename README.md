@@ -250,6 +250,18 @@ tail -f ~/.ato/run.log
 | **Windows + Git Bash** | ⚠️ Partial | ❌ | Core commands work; hooks unreliable |
 | **Windows (native)** | ❌ | ❌ | Bash required |
 
+#### IDE Support
+
+ato works wherever **Claude Code** runs. The rule: if it reads `.claude/settings.json` and fires hooks, ato works automatically.
+
+| Environment | Works? | Notes |
+|---|---|---|
+| **VS Code** + Claude Code extension | ✅ | Same hook system — no extra setup |
+| **JetBrains** + Claude Code extension | ✅ | Same hook system — no extra setup |
+| **Cursor** | ❌ | Not Claude Code — different hook system |
+| **GitHub Copilot** | ❌ | Different product entirely |
+| **Windsurf** | ❌ | Different product entirely |
+
 #### macOS — Desktop App
 
 No extra steps. `ato init` stores the absolute path to the ato binary in hook commands, so the Desktop App can find it even without sourcing your shell profile:
@@ -626,6 +638,18 @@ tail -f ~/.ato/run.log
 | **Windows + WSL2** | ✅ کامل | ✅ کامل | Hooks از `wsl bash -lc` استفاده می‌کنن |
 | **Windows + Git Bash** | ⚠️ ناقص | ❌ | دستورات اصلی کار می‌کنن؛ hooks نه |
 | **Windows (native)** | ❌ | ❌ | Bash لازمه |
+
+#### پشتیبانی IDE
+
+ato هر جا **Claude Code** باشه کار می‌کنه. قانون: اگه `.claude/settings.json` خونده بشه و hooks فایر بشن، ato خودکار کار می‌کنه.
+
+| محیط | کار می‌کنه؟ | توضیح |
+|---|---|---|
+| **VS Code** + Claude Code extension | ✅ | همون hook system — نیاز به تنظیم اضافه نیست |
+| **JetBrains** + Claude Code extension | ✅ | همون hook system — نیاز به تنظیم اضافه نیست |
+| **Cursor** | ❌ | Claude Code نیست — hook system متفاوت |
+| **GitHub Copilot** | ❌ | محصول کاملاً متفاوت |
+| **Windsurf** | ❌ | محصول کاملاً متفاوت |
 
 #### macOS — Desktop App
 
