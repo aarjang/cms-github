@@ -134,8 +134,9 @@ tail -f ~/.ato/run.log
 
 | دستور | کار |
 |---|---|
-| `ato init` | یه بار — code graph + hooks + CLAUDE.md |
-| `ato note "text"` | ثبت تصمیم مهم حین session |
+| `ato init` | یه بار — code graph + hooks + CLAUDE.md + DECISIONS.md |
+| `ato mem "decision"` | ثبت تصمیم که context reset رو survive می‌کنه |
+| `ato note "text"` | ثبت تصمیم مهم حین session در CONTEXT.md |
 | `ato check` | وضعیت پروژه + context usage + savings |
 | `ato audit` | token budget per section |
 | `ato audit --reset` | ریست کردن آمار sessions |
@@ -189,6 +190,42 @@ ato task add/done         # task tracking اختیاری
 
 > **درباره اعداد savings:** این‌ها تخمین هستن، نه اندازه‌گیری دقیق. محاسبه اینطوره:
 > `saved = (همه سورس فایل‌ها) − (CONTEXT.md + focus file)`. در واقع Claude بدون ato هم لزوماً کل codebase رو نمی‌خونه — ولی ato مطمئن می‌شه که فقط چیز مرتبط رو می‌خونه.
+
+---
+
+## حافظه دائمی / Persistent Memory
+
+وقتی Claude Code history رو پاک می‌کنه یا context reset می‌شه، تصمیمات و کارهای نیمه‌تمام از دست می‌رن. `DECISIONS.md` این مشکل رو حل می‌کنه — جدا از `CONTEXT.md`، خودکار sync می‌شه، و بعد از هر reset Claude دوباره می‌خونتش.
+
+```bash
+ato mem "decided to use Redis instead of Postgres for session storage"
+ato mem --wip "auth middleware — 70% done, next: token refresh"
+ato mem --warn "never touch bin/legacy-migrate.sh — breaks prod silently"
+```
+
+بعد از هر session که context reset بشه، Claude این رو می‌خونه و از همون جایی که بودی ادامه می‌ده.
+
+```
+## Active work
+- [ ] auth middleware — 70% done, next: token refresh
+
+## Decisions
+- 2026-06-28  Redis (not Postgres) for session storage — latency req
+
+## Watch out
+- never touch bin/legacy-migrate.sh — breaks prod silently
+```
+
+| دستور | کار |
+|---|---|
+| `ato mem "decision"` | ثبت تصمیم با تاریخ |
+| `ato mem --wip "text"` | کار در جریان |
+| `ato mem --done "text"` | حذف WIP تموم‌شده |
+| `ato mem --warn "text"` | هشدار / gotcha |
+| `ato mem --list` | نمایش همه حافظه |
+| `ato mem --clear` | پاک کردن همه |
+
+`DECISIONS.md` توسط `ato sync` بعد از هر session خودکار commit و push می‌شه — روی هر machine‌ای `git pull` کافیه.
 
 ---
 
