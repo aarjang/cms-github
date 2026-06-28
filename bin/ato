@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="2.5.0"
+VERSION="2.6.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -1453,6 +1453,150 @@ EOF
   esac
 }
 
+# ─── MCP ─────────────────────────────────────────────────────────────
+
+_json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+_strip_ansi() {
+  sed 's/\x1B\[[0-9;]*[mGKHF]//g; s/\x1B\[[0-9;]*[A-Za-z]//g'
+}
+
+_mcp_reply() {
+  local id="$1" text="$2"
+  local escaped
+  escaped=$(_json_escape "$text")
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$id" "$escaped"
+}
+
+_mcp_error() {
+  local id="$1" msg="$2"
+  local escaped
+  escaped=$(_json_escape "$msg")
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"%s"}}\n' "$id" "$escaped"
+}
+
+_mcp_tools_list() {
+  local id="$1"
+  # single-line JSON required for newline-delimited JSON-RPC
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[' "$id"
+  printf '{"name":"ato_focus","description":"Auto-detect work area from git and generate focused session file","inputSchema":{"type":"object","properties":{}}},'
+  printf '{"name":"ato_sync","description":"Sync CONTEXT.md with git state and record token savings","inputSchema":{"type":"object","properties":{}}},'
+  printf '{"name":"ato_note","description":"Save a decision to CONTEXT.md — survives compaction","inputSchema":{"type":"object","properties":{"text":{"type":"string","description":"Decision or key fact to save"}},"required":["text"]}},'
+  printf '{"name":"ato_status","description":"Show project health and token budget","inputSchema":{"type":"object","properties":{}}},'
+  printf '{"name":"ato_doctor","description":"Audit startup token overhead","inputSchema":{"type":"object","properties":{}}},'
+  printf '{"name":"ato_checkpoint","description":"Estimate current context usage and get stopping recommendation","inputSchema":{"type":"object","properties":{}}}'
+  printf ']}}\n'
+}
+
+_mcp_install() {
+  local ato_path
+  ato_path=$(command -v ato 2>/dev/null || echo "$HOME/bin/ato")
+  local settings=".claude/settings.json"
+
+  if [[ ! -f "$settings" ]]; then
+    mkdir -p ".claude"
+    cat > "$settings" << EOF
+{
+  "mcpServers": {
+    "ato": {
+      "command": "$ato_path",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+EOF
+    success "ato MCP server registered → $settings"
+    info "Restart Claude Code to activate"
+    info "Claude can now call: ato_focus, ato_sync, ato_note, ato_status, ato_doctor, ato_checkpoint"
+    return
+  fi
+
+  if grep -q '"ato"' "$settings" 2>/dev/null; then
+    success "ato already registered in $settings"
+    return
+  fi
+
+  # Merge into existing settings.json using awk
+  if grep -q '"mcpServers"' "$settings" 2>/dev/null; then
+    awk -v path="$ato_path" '
+      /"mcpServers"[[:space:]]*:\s*\{/ {
+        print
+        printf "    \"ato\": {\"command\": \"%s\", \"args\": [\"mcp\"], \"type\": \"stdio\"},\n", path
+        next
+      }
+      { print }
+    ' "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
+  else
+    # No mcpServers key — inject before closing brace
+    awk -v path="$ato_path" '
+      /^\}[[:space:]]*$/ {
+        printf "  ,\"mcpServers\": {\"ato\": {\"command\": \"%s\", \"args\": [\"mcp\"], \"type\": \"stdio\"}}\n", path
+      }
+      { print }
+    ' "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
+  fi
+
+  success "ato MCP server registered → $settings"
+  info "Restart Claude Code to activate"
+}
+
+cmd_mcp() {
+  local subcmd="${1:-}"
+  [[ "$subcmd" == "install" ]] && { _mcp_install; return; }
+
+  # stdio MCP server — reads one JSON-RPC message per line
+  local line id method tool_name
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+
+    id=$(printf '%s' "$line" | grep -o '"id":[^,}]*' | head -1 | sed 's/"id"://' | tr -d ' "')
+    [[ -z "$id" ]] && id="null"
+    method=$(printf '%s' "$line" | grep -o '"method":"[^"]*"' | head -1 | sed 's/"method":"//;s/"//')
+
+    case "$method" in
+      initialize)
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"ato","version":"%s"}}}\n' "$id" "$VERSION"
+        ;;
+      notifications/initialized)
+        ;;  # no response for notifications
+      tools/list)
+        _mcp_tools_list "$id"
+        ;;
+      tools/call)
+        tool_name=$(printf '%s' "$line" | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"//;s/"//')
+        local out
+        case "$tool_name" in
+          ato_focus)      out=$(cmd_focus 2>&1 | _strip_ansi) ;;
+          ato_sync)       out=$(cmd_sync  2>&1 | _strip_ansi) ;;
+          ato_status)     out=$(cmd_status 2>&1 | _strip_ansi) ;;
+          ato_doctor)     out=$(cmd_doctor 2>&1 | _strip_ansi) ;;
+          ato_checkpoint) out=$(cmd_checkpoint 2>&1 | _strip_ansi) ;;
+          ato_note)
+            local txt
+            txt=$(printf '%s' "$line" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"//;s/"$//')
+            if [[ -z "$txt" ]]; then
+              _mcp_error "$id" "Missing required argument: text"; continue
+            fi
+            out=$(cmd_note "$txt" 2>&1 | _strip_ansi)
+            ;;
+          *) _mcp_error "$id" "Unknown tool: $tool_name"; continue ;;
+        esac
+        _mcp_reply "$id" "$out"
+        ;;
+      *) [[ -n "$method" ]] && _mcp_error "$id" "Unknown method: $method" ;;
+    esac
+  done
+}
+
 # ─── Note ────────────────────────────────────────────────────────────
 cmd_note() {
   local note="${1:-}"
@@ -1768,6 +1912,8 @@ cmd_help() {
   echo "  prompt               Print the optimal Claude Code session starter"
   echo "  update               Update ato + templates to latest version"
   echo "  reset-stats [global] Reset stats counters"
+  echo "  mcp                  Start ato as an MCP server (stdio)"
+  echo "  mcp install          Register ato MCP server in .claude/settings.json"
   echo "  help                 Show this help"
   echo ""
   echo -e "${BOLD}ALSO AVAILABLE (optional task tracking)${RESET}"
@@ -1803,6 +1949,7 @@ main() {
     prompt)         cmd_prompt ;;
     update)         cmd_update ;;
     reset-stats)    cmd_reset_stats "$@" ;;
+    mcp)            cmd_mcp "$@" ;;
     help|-h|--help) cmd_help ;;
     *)
       error "Unknown command: $cmd"

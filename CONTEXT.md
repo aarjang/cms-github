@@ -79,7 +79,7 @@ ato update
 ---
 
 ## Active work area
-Current focus: `CONTEXT.md`
+Current focus: `.claude/settings.json bin/ato`
 Files in scope for current task:
 - `bin/ato` — اسکریپت اصلی، همه commands اینجاست
 - `bin/cms` — migration shim از cms به ato
@@ -89,4 +89,5 @@ Files in scope for current task:
 <!-- Claude: read TASKS.md for what to do, DECISIONS.md if you need to understand why -->
 
 ## Session Notes
+- [2026-06-28 11:06] MCP server tested successfully
 - [2026-06-28 11:02] decided to use cksum for SHA256 — no external deps needed

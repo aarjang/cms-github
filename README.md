@@ -105,7 +105,7 @@ ATO Token Savings
   │  Sessions run                    12  │
   │  Tokens saved               ~847k  │
   │  Tasks completed                 8  │
-  │  Last session           2026-06-27  │
+  │  Last session           2026-06-28  │
   └─────────────────────────────────────┘
   avg ~70k tokens saved per session
   ≈ $2.54 saved in API costs (@ $3/MTok)
@@ -136,20 +136,48 @@ Total                             89    ~534
 
 ---
 
+## MCP Server Mode
+
+ato می‌تونه به عنوان یه MCP server اجرا بشه — یعنی Claude Code می‌تونه مستقیماً دستورات ato رو صدا بزنه بدون اینکه کاربر چیزی تایپ کنه.
+
+```bash
+ato mcp install   # ato رو به .claude/settings.json اضافه می‌کنه
+```
+
+بعد از restart کردن Claude Code، این tools در دسترس Claude هستن:
+
+| Tool | کار |
+|---|---|
+| `ato_focus` | auto-focus از git signals |
+| `ato_sync` | sync CONTEXT.md + ثبت savings |
+| `ato_note` | ثبت تصمیم در CONTEXT.md |
+| `ato_status` | وضعیت پروژه |
+| `ato_doctor` | audit startup tokens |
+| `ato_checkpoint` | برآورد context usage |
+
+---
+
 ## دستورات / Commands
 
 ```
-ato init              اسکن پروژه → CONTEXT.md + CLAUDE.md + stop-hook
-ato focus             auto-detect work area از git → focused session
-ato sync              آپدیت CONTEXT.md + ثبت savings
-ato status            وضعیت کلی پروژه + token budget
-ato stats             آمار صرفه‌جویی توکن + معادل دلاری
-ato trim              token budget per section + آدیت CONTEXT.md
-ato scope <pattern>   هزینه توکن یه مجموعه فایل
-ato update            آپدیت ato به آخرین نسخه
-ato add "task"        اضافه کردن task به TASKS.md
-ato focus <id>        focused session برای یه task مشخص
-ato done <id>         archive کردن task
+ato init                اسکن پروژه → CONTEXT.md + CLAUDE.md + stop-hook
+ato focus               auto-detect work area از git → focused session
+ato focus <topic>       focus روی یه topic مشخص (جستجو در git history)
+ato focus --budget 40k  trim scope برای Pro plan (محدودیت توکن)
+ato sync                آپدیت CONTEXT.md + ثبت savings
+ato note "text"         ثبت تصمیم در CONTEXT.md (بعد از compaction باقی می‌مونه)
+ato status              وضعیت کلی پروژه + token budget
+ato stats               آمار صرفه‌جویی توکن + معادل دلاری
+ato trim                token budget per section + آدیت CONTEXT.md
+ato slim [file]         نمایش sections CLAUDE.md بر اساس اندازه
+ato doctor              audit overhead startup (CLAUDE.md، memory files)
+ato checkpoint          برآورد context usage + پیشنهاد stopping point
+ato scope <pattern>     هزینه توکن یه مجموعه فایل
+ato mcp install         ثبت ato به عنوان MCP server در Claude Code
+ato update              آپدیت ato به آخرین نسخه
+ato add "task"          اضافه کردن task به TASKS.md
+ato focus <id>          focused session برای یه task مشخص
+ato done <id>           archive کردن task
 ```
 
 ---

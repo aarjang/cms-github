@@ -12,4 +12,5 @@
       }
     ]
   }
+  ,"mcpServers": {"ato": {"command": "/Users/arjang/bin/ato", "args": ["mcp"], "type": "stdio"}}
 }
