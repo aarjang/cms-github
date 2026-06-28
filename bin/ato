@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -1390,6 +1390,203 @@ EOF
   esac
 }
 
+# ─── Doctor ──────────────────────────────────────────────────────────
+cmd_doctor() {
+  local WINDOW=200000
+  local RESERVED=33000   # autocompact buffer — hardcoded by Claude Code, non-negotiable
+  local startup_tokens=0
+  local issues=0
+
+  echo ""
+  printf "${BOLD}╔%50s╗${RESET}\n" | tr ' ' '═'
+  printf "${BOLD}║${RESET}  %-48s${BOLD}║${RESET}\n" "ATO Doctor — Startup Token Audit"
+  printf "${BOLD}╚%50s╝${RESET}\n" | tr ' ' '═'
+  echo ""
+
+  echo -e "  ${BOLD}Startup file overhead${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..48})"
+
+  # CONTEXT.md
+  if [[ -f "$CONTEXT_FILE" ]]; then
+    local ctx_lines ctx_tokens ctx_tag
+    ctx_lines=$(wc -l < "$CONTEXT_FILE")
+    ctx_tokens=$(( ctx_lines * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + ctx_tokens ))
+    if [[ $ctx_lines -gt 200 ]]; then
+      ctx_tag="${YELLOW}⚠ over limit — run: ato trim${RESET}"
+      issues=$(( issues + 1 ))
+    else
+      ctx_tag="${GREEN}lean ✓${RESET}"
+    fi
+    printf "  %-20s %4d lines  ~%-6s tokens  " "CONTEXT.md" "$ctx_lines" "$(fmt_tokens $ctx_tokens)"
+    echo -e "$ctx_tag"
+  else
+    printf "  %-20s %s\n" "CONTEXT.md" "missing — run: ato init"
+    issues=$(( issues + 1 ))
+  fi
+
+  # CLAUDE.md
+  if [[ -f "$CLAUDE_FILE" ]]; then
+    local cl_lines cl_tokens cl_tag
+    cl_lines=$(wc -l < "$CLAUDE_FILE")
+    cl_tokens=$(( cl_lines * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + cl_tokens ))
+    if [[ $cl_lines -gt 200 ]]; then
+      cl_tag="${YELLOW}⚠ Anthropic target: <200 lines — trim this file${RESET}"
+      issues=$(( issues + 1 ))
+    else
+      cl_tag="${GREEN}lean ✓${RESET}"
+    fi
+    printf "  %-20s %4d lines  ~%-6s tokens  " "CLAUDE.md" "$cl_lines" "$(fmt_tokens $cl_tokens)"
+    echo -e "$cl_tag"
+  else
+    printf "  ${YELLOW}!${RESET}  %-18s %s\n" "CLAUDE.md" "missing"
+  fi
+
+  # .claude/memory/ files
+  local mem_dir=".claude/memory"
+  if [[ -d "$mem_dir" ]]; then
+    local mem_files mem_lines mem_tokens
+    mem_files=$(find "$mem_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+    mem_lines=$(find "$mem_dir" -type f 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+    mem_tokens=$(( ${mem_lines:-0} * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + mem_tokens ))
+    local mem_tag
+    if [[ ${mem_tokens:-0} -gt 5000 ]]; then
+      mem_tag="${YELLOW}⚠ large — review and prune${RESET}"
+      issues=$(( issues + 1 ))
+    else
+      mem_tag="${GREEN}ok ✓${RESET}"
+    fi
+    printf "  %-20s %4d files  ~%-6s tokens  " ".claude/memory/" "$mem_files" "$(fmt_tokens $mem_tokens)"
+    echo -e "$mem_tag"
+  else
+    printf "  ${DIM}%-20s not found${RESET}\n" ".claude/memory/"
+  fi
+
+  echo ""
+  echo -e "  ${BOLD}Token budget${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..48})"
+
+  local available=$(( WINDOW - RESERVED - startup_tokens ))
+  local used_pct=$(( (RESERVED + startup_tokens) * 100 / WINDOW ))
+  local avail_pct=$(( available * 100 / WINDOW ))
+
+  printf "  %-26s  ~%s\n"  "Window (Claude Code)"     "$(fmt_tokens $WINDOW) tokens"
+  printf "  %-26s  ~%s\n"  "Reserved buffer (fixed)"  "$(fmt_tokens $RESERVED) tokens"
+  printf "  %-26s  ~%s\n"  "Startup files (yours)"    "$(fmt_tokens $startup_tokens) tokens"
+  printf "  %s\n" "$(printf '─%.0s' {1..48})"
+  if [[ $available -gt 100000 ]]; then
+    printf "  ${GREEN}%-26s  ~%s (${avail_pct}%% of window)${RESET}\n" "Available for work" "$(fmt_tokens $available) tokens"
+  elif [[ $available -gt 60000 ]]; then
+    printf "  ${YELLOW}%-26s  ~%s (${avail_pct}%% of window)${RESET}\n" "Available for work" "$(fmt_tokens $available) tokens"
+  else
+    printf "  ${RED}%-26s  ~%s (${avail_pct}%% of window)${RESET}\n" "Available for work" "$(fmt_tokens $available) tokens"
+  fi
+  echo ""
+
+  if [[ $issues -eq 0 ]]; then
+    success "All clear — startup overhead is lean"
+  else
+    warn "$issues issue(s) found — fix them to reclaim tokens before Claude reads a single file"
+  fi
+  echo ""
+}
+
+# ─── Checkpoint ──────────────────────────────────────────────────────
+cmd_checkpoint() {
+  local WINDOW=200000
+  local RESERVED=33000
+  local startup_tokens avg_turn_tokens=800 est_turns=20
+
+  # Startup overhead (same as doctor)
+  local ctx_lines=0 cl_lines=0 mem_lines=0
+  [[ -f "$CONTEXT_FILE" ]] && ctx_lines=$(wc -l < "$CONTEXT_FILE")
+  [[ -f "$CLAUDE_FILE"  ]] && cl_lines=$(wc -l < "$CLAUDE_FILE")
+  if [[ -d ".claude/memory" ]]; then
+    mem_lines=$(find ".claude/memory" -type f 2>/dev/null | \
+      xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}') || mem_lines=0
+  fi
+  startup_tokens=$(( (ctx_lines + cl_lines + ${mem_lines:-0}) * TOKENS_PER_LINE ))
+
+  # Focus file size (what Claude is actively reading this session)
+  local focus_tokens=0
+  if [[ -f ".ato_focus_auto.md" ]]; then
+    local fl
+    fl=$(wc -l < ".ato_focus_auto.md")
+    focus_tokens=$(( fl * TOKENS_PER_LINE ))
+  else
+    # Fall back to any cms_focus file
+    local cf
+    cf=$(find . -maxdepth 1 -name ".cms_focus_*.md" 2>/dev/null | head -1 || true)
+    if [[ -n "$cf" ]]; then
+      local fl2
+      fl2=$(wc -l < "$cf")
+      focus_tokens=$(( fl2 * TOKENS_PER_LINE ))
+    fi
+  fi
+
+  # Session age estimate → rough turn count
+  local last_s turns_est
+  last_s=$(json_get "$LOCAL_STATS" "last_session" 2>/dev/null | cut -c1-10 || echo "")
+  local today
+  today=$(date +%Y-%m-%d)
+  if [[ "$last_s" == "$today" ]]; then
+    turns_est=$avg_turn_tokens   # active session today
+  else
+    turns_est=$(( avg_turn_tokens / 2 ))   # older session, be conservative
+  fi
+
+  local conversation_est=$(( est_turns * turns_est ))
+  local total_est=$(( RESERVED + startup_tokens + focus_tokens + conversation_est ))
+  [[ $total_est -gt $WINDOW ]] && total_est=$WINDOW
+
+  local used_pct=$(( total_est * 100 / WINDOW ))
+  local bar_len=30
+  local filled=$(( bar_len * used_pct / 100 ))
+  [[ $filled -gt $bar_len ]] && filled=$bar_len
+
+  echo ""
+  echo -e "  ${BOLD}Context Checkpoint${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..48})"
+
+  printf "  %-26s  ~%s\n" "Reserved buffer"      "$(fmt_tokens $RESERVED)"
+  printf "  %-26s  ~%s\n" "Startup files"        "$(fmt_tokens $startup_tokens)"
+  printf "  %-26s  ~%s\n" "Focus file"           "$(fmt_tokens $focus_tokens)"
+  printf "  %-26s  ~%s\n" "Conversation (est.)"  "$(fmt_tokens $conversation_est)"
+  printf "  %s\n" "$(printf '─%.0s' {1..48})"
+  printf "  %-26s  ~%s / ~%s  (%d%%)\n" "Estimated used" \
+    "$(fmt_tokens $total_est)" "$(fmt_tokens $WINDOW)" "$used_pct"
+  echo ""
+
+  # Bar
+  local bar filled_s empty_s
+  filled_s=$(printf '█%.0s' $(seq 1 $filled 2>/dev/null) || printf '%0.s█' $(seq 1 $filled))
+  local empty=$(( bar_len - filled ))
+  empty_s=$(printf '░%.0s' $(seq 1 $empty 2>/dev/null) || printf '%0.s░' $(seq 1 $empty))
+
+  if [[ $used_pct -lt 60 ]]; then
+    printf "  ${GREEN}%s%s${RESET}  %d%%\n" "$filled_s" "$empty_s" "$used_pct"
+    echo ""
+    success "Safe to continue — plenty of context remaining"
+  elif [[ $used_pct -lt 75 ]]; then
+    printf "  ${YELLOW}%s%s${RESET}  %d%%\n" "$filled_s" "$empty_s" "$used_pct"
+    echo ""
+    warn "Wrap up soon — approaching the quality cliff"
+    dim "  Research shows sessions stopping at 75% produce better code than those at 90%"
+  else
+    printf "  ${RED}%s%s${RESET}  %d%%\n" "$filled_s" "$empty_s" "$used_pct"
+    echo ""
+    warn "Stop now — context degradation likely already happening"
+    dim "  Save your work, run: ato sync, then start a fresh session"
+    dim "  Research shows sessions stopping at 75% produce better code than those at 90%"
+  fi
+  echo ""
+  dim "  Note: conversation estimate is approximate (${est_turns} turns × ~${avg_turn_tokens} tokens/turn)"
+  dim "  For exact usage: type /context inside Claude Code"
+  echo ""
+}
+
 # ─── Help ────────────────────────────────────────────────────────────
 cmd_help() {
   echo ""
@@ -1411,6 +1608,8 @@ cmd_help() {
   echo "  stats [local|global] Token savings breakdown"
   echo "  scope <pattern>      Estimate token cost of a file set (e.g. '*.ts')"
   echo "  trim                 Audit CONTEXT.md for bloat (target: <200 lines)"
+  echo "  doctor               Audit startup token overhead (CLAUDE.md, memory, CONTEXT.md)"
+  echo "  checkpoint           Estimate current context usage + stopping recommendation"
   echo "  prompt               Print the optimal Claude Code session starter"
   echo "  update               Update ato + templates to latest version"
   echo "  reset-stats [global] Reset stats counters"
@@ -1440,6 +1639,8 @@ main() {
     status)         cmd_status "$@" ;;
     scope)          cmd_scope "$@" ;;
     trim)           cmd_trim "$@" ;;
+    doctor)         cmd_doctor ;;
+    checkpoint)     cmd_checkpoint ;;
     prompt)         cmd_prompt ;;
     update)         cmd_update ;;
     reset-stats)    cmd_reset_stats "$@" ;;
