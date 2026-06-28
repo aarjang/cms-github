@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="3.3.0"
+VERSION="3.4.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -803,9 +803,30 @@ _is_wsl() {
   grep -qi "microsoft\|wsl" /proc/version 2>/dev/null
 }
 
-# Returns "wsl " prefix when running inside WSL (hooks run on Windows host)
-_hook_prefix() {
-  _is_wsl && echo "wsl " || echo ""
+_detect_platform() {
+  if _is_wsl; then
+    echo "Windows (WSL2)"
+  elif [[ "$(uname 2>/dev/null)" == "Darwin" ]]; then
+    echo "macOS"
+  else
+    echo "Linux"
+  fi
+}
+
+# Build hook commands that work in both CLI and Desktop App:
+#   macOS/Linux: absolute path to ato binary (Desktop App may not have ~/bin in PATH)
+#   WSL/Windows: wsl bash -lc '...' (Desktop App runs on Windows, needs WSL bridge)
+_build_hook_cmds() {
+  local ato_bin
+  ato_bin=$(command -v ato 2>/dev/null || echo "$HOME/bin/ato")
+
+  if _is_wsl; then
+    HOOK_FOCUS="wsl bash -lc 'ato go --quiet'"
+    HOOK_SYNC="wsl bash -lc 'ato sync'"
+  else
+    HOOK_FOCUS="$ato_bin go --quiet"
+    HOOK_SYNC="$ato_bin sync"
+  fi
 }
 
 _setup_hook() {
@@ -815,10 +836,8 @@ _setup_hook() {
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
 
-  local prefix
-  prefix=$(_hook_prefix)
-  local cmd_focus="${prefix}ato go --quiet"
-  local cmd_sync="${prefix}ato sync"
+  local HOOK_FOCUS HOOK_SYNC
+  _build_hook_cmds
 
   if [[ ! -f "$settings_file" ]]; then
     cat > "$settings_file" << HOOKEOF
@@ -830,7 +849,7 @@ _setup_hook() {
         "hooks": [
           {
             "type": "command",
-            "command": "$cmd_focus"
+            "command": "$HOOK_FOCUS"
           }
         ]
       }
@@ -841,7 +860,7 @@ _setup_hook() {
         "hooks": [
           {
             "type": "command",
-            "command": "$cmd_sync"
+            "command": "$HOOK_SYNC"
           }
         ]
       }
@@ -849,24 +868,23 @@ _setup_hook() {
   }
 }
 HOOKEOF
-    success "Claude Code hooks installed:"
-    dim "  UserPromptSubmit → $cmd_focus  (auto-focuses on session start)"
-    dim "  Stop             → $cmd_sync        (auto-syncs after each session)"
-    [[ -n "$prefix" ]] && info "WSL detected — hooks use 'wsl ato' prefix for Windows Claude Code"
+    success "Claude Code hooks installed ($(_detect_platform)):"
+    dim "  UserPromptSubmit → $HOOK_FOCUS"
+    dim "  Stop             → $HOOK_SYNC"
     return
   fi
 
   local updated=0
 
-  if ! grep -q "ato sync" "$settings_file" 2>/dev/null; then
-    warn "Existing .claude/settings.json found — add Stop hook manually:"
-    dim "  \"Stop\": [{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"$cmd_sync\"}]}]"
+  if ! grep -q "ato sync\|ato go" "$settings_file" 2>/dev/null; then
+    warn "Existing .claude/settings.json — add hooks manually:"
+    dim "  UserPromptSubmit: $HOOK_FOCUS"
+    dim "  Stop:             $HOOK_SYNC"
   fi
 
   if ! grep -q "ato go" "$settings_file" 2>/dev/null; then
-    # Inject UserPromptSubmit before the first "hooks" key or closing brace
     if grep -q '"hooks"' "$settings_file" 2>/dev/null; then
-      awk -v cmd="$cmd_focus" '
+      awk -v cmd="$HOOK_FOCUS" '
         /"hooks"[[:space:]]*:/ && !done {
           print "    \"UserPromptSubmit\": [{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"" cmd "\"}]}],"
           done=1
@@ -874,7 +892,7 @@ HOOKEOF
         { print }
       ' "$settings_file" > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
     else
-      awk -v cmd="$cmd_focus" '
+      awk -v cmd="$HOOK_FOCUS" '
         /^\}[[:space:]]*$/ && !done {
           print "  ,\"hooks\":{\"UserPromptSubmit\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"" cmd "\"}]}]}"
           done=1
@@ -882,7 +900,7 @@ HOOKEOF
         { print }
       ' "$settings_file" > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
     fi
-    success "Added UserPromptSubmit hook → $cmd_focus"
+    success "Added UserPromptSubmit hook → $HOOK_FOCUS"
     updated=$(( updated + 1 ))
   fi
 
@@ -1292,9 +1310,10 @@ cmd_init() {
   dim "  3. After each session, CONTEXT.md is updated automatically"
   if _is_wsl; then
     echo ""
-    info "WSL tip: open your project from Windows path for best Claude Code compatibility:"
-    dim "  cd /mnt/c/Users/\$USER/projects/$(basename "$PWD")"
-    dim "  Hooks are set to 'wsl ato ...' so Claude Code Desktop can call them"
+    info "WSL detected — hooks use 'wsl bash -lc' so Claude Code Desktop for Windows can call them"
+    dim "  Tip: keep projects under /mnt/c/... so Claude Code Desktop can open them"
+    dim "  Current path: $PWD"
+    [[ "$PWD" != /mnt/* ]] && warn "Project is in WSL filesystem — Claude Code Desktop may not reach it"
   fi
   echo ""
 }
@@ -2557,6 +2576,22 @@ cmd_check() {
     printf "  ${RED}%s%s${RESET}  %d%%  stop now — quality degrades above 75%%\n" "$filled_s" "$empty_s" "$used_pct"
   fi
   dim "  (estimate — for exact: /context inside Claude Code)"
+  echo ""
+
+  # ── Environment ───────────────────────────────────────────────
+  echo -e "  ${BOLD}Environment${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+  local platform ato_bin hook_focus
+  platform=$(_detect_platform)
+  ato_bin=$(command -v ato 2>/dev/null || echo "$HOME/bin/ato")
+  if _is_wsl; then
+    hook_focus="wsl bash -lc 'ato go --quiet'"
+  else
+    hook_focus="$ato_bin go --quiet"
+  fi
+  printf "  %-14s  %s\n" "Platform" "$platform"
+  printf "  %-14s  %s\n" "ato binary" "$ato_bin"
+  printf "  %-14s  %s\n" "Hook command" "$hook_focus"
   echo ""
 
   # ── Git ────────────────────────────────────────────────────────

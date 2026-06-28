@@ -1,11 +1,10 @@
-
 <p align="center">
   <pre align="center">
    ___  ____  ___
   / _ \/ ___||__ \
  / /_\/\___ \  / /
 / /_\ \___) |/ /
-\____/|____//_/   v3.3.0
+\____/|____//_/   v3.4.0
   </pre>
 </p>
 
@@ -15,22 +14,36 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.3.0-blue?style=flat-square" alt="version"/>
+  <img src="https://img.shields.io/badge/version-3.4.0-blue?style=flat-square" alt="version"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"/>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey?style=flat-square" alt="platform"/>
+  <img src="https://img.shields.io/badge/macOS-✓-black?style=flat-square&logo=apple" alt="macOS"/>
+  <img src="https://img.shields.io/badge/Linux-✓-yellow?style=flat-square&logo=linux&logoColor=black" alt="Linux"/>
+  <img src="https://img.shields.io/badge/Windows_WSL2-✓-0078d4?style=flat-square&logo=windows" alt="WSL2"/>
   <img src="https://img.shields.io/badge/shell-bash-orange?style=flat-square&logo=gnu-bash" alt="bash"/>
   <img src="https://img.shields.io/badge/deps-zero-brightgreen?style=flat-square" alt="zero deps"/>
 </p>
 
 <p align="center">
-  🧠 Builds a <strong>code intelligence graph</strong> so Claude understands your project instantly &nbsp;·&nbsp;
-  🔗 <strong>Auto-wires hooks</strong> — zero copy-paste, zero manual steps &nbsp;·&nbsp;
-  💾 <strong>Persistent memory</strong> that survives context resets
+  🧠 <strong>Code intelligence graph</strong> — Claude understands your architecture instantly &nbsp;·&nbsp;
+  🔗 <strong>Auto-wired hooks</strong> — zero manual steps &nbsp;·&nbsp;
+  💾 <strong>Persistent memory</strong> — survives context resets
 </p>
 
 ---
 
 ## 🇬🇧 English
+
+- [The Problem](#-the-problem)
+- [Install](#-install)
+- [Quick Start](#-quick-start)
+- [What ato init does](#-what-ato-init-does)
+- [Persistent Memory](#-persistent-memory-ato-mem)
+- [How It Works](#-how-it-works)
+- [Platform Support](#-platform-support)
+- [ato check Dashboard](#-ato-check-dashboard)
+- [Commands Reference](#-commands-reference)
+- [Token Savings](#-token-savings)
+- [License](#-license)
 
 ---
 
@@ -40,9 +53,9 @@ Every Claude Code session, Claude reads your entire codebase to understand your 
 
 ```
 ❌ Without ato
-   Claude reads: src/ + tests/ + configs + node_modules hints = ~50,000 tokens
-   Your task needed: 2 files = ~3,000 tokens
-   Wasted: ~94% of your token budget
+   Claude reads: src/ + tests/ + configs = ~50,000 tokens
+   Your actual task needed: 2 files = ~3,000 tokens
+   Wasted: ~94% of your token budget — every single session
 
 ✅ With ato
    Claude reads: CONTEXT.md + focus file = ~2,000 tokens
@@ -54,9 +67,10 @@ Every Claude Code session, Claude reads your entire codebase to understand your 
 |---|---|---|
 | Session startup | ~50k tokens | ~2k tokens |
 | Claude reads | Entire codebase | Focused context only |
-| Architecture known | ❌ Has to explore | ✅ Pre-mapped |
-| Setup per session | Manual copy-paste | Fully automatic |
-| Survives context reset | ❌ Lost | ✅ DECISIONS.md |
+| Architecture known | ❌ Must explore first | ✅ Pre-mapped at init |
+| Session setup | Manual copy-paste | Fully automatic |
+| Context reset | ❌ Start over from scratch | ✅ DECISIONS.md loaded |
+| Multi-machine sync | ❌ Manual | ✅ Auto git commit |
 
 ---
 
@@ -67,6 +81,9 @@ curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
 source ~/.zshrc   # or ~/.bashrc
 ```
 
+> Works on macOS (Terminal + Claude Code App), Linux, and Windows via WSL2.
+> See [Platform Support](#-platform-support) for Windows setup.
+
 ---
 
 ### 🚀 Quick Start
@@ -76,19 +93,21 @@ source ~/.zshrc   # or ~/.bashrc
 cd ~/your-project
 ato init
 
-# Step 2 — every session
+# Step 2 — every session (Terminal or Desktop App)
 claude
 ```
 
-That's it. No copy-paste. No manual `ato go`. Just open Claude and type.
+That's it. No copy-paste. No manual steps. Just open Claude and type.
 
-> **Working on another machine?** Just `git pull` — context and memory sync automatically.
+> **Working from another machine?** Run `git pull` — your context, memory, and stats sync automatically.
 
 ---
 
-### 🔬 What `ato init` does
+### 🔬 What `ato init` Does
 
-#### 🧠 Builds a Code Intelligence Graph → `CONTEXT.md`
+#### 🧠 Code Intelligence Graph → `CONTEXT.md`
+
+Scans your project and builds a structured map Claude reads before every session:
 
 ```markdown
 ## Architecture
@@ -107,30 +126,37 @@ That's it. No copy-paste. No manual `ato go`. Just open Claude and type.
   user.model.ts   ↔ user.service.ts       11 commits
 ```
 
-Claude reads this and immediately knows your architecture — **without opening a single file**.
+Claude reads this and knows your architecture **without opening a single file**.
+
+The graph is built from:
+- **Architecture layers** — detected from directory names and filename patterns
+- **Critical path** — files most imported across the project, with their export surface
+- **Coupling map** — pairs that always change together, from the last 90 days of git history
 
 #### 🔗 Auto-wires Hooks → `.claude/settings.json`
 
-| Hook | Command | When |
+| Hook | Fires | Action |
 |---|---|---|
-| `UserPromptSubmit` | `ato go --quiet` | Before every session — auto-generates focus file |
-| `Stop` | `ato sync` | After every session — updates CONTEXT.md + auto-commits |
+| `UserPromptSubmit` | Before every session | `ato go --quiet` → generates focus file |
+| `Stop` | After every session | `ato sync` → updates CONTEXT.md + auto-commits |
 
-#### 📋 `CLAUDE.md` — Standing Instruction
+Hook commands use the **absolute path** to the ato binary, so they work correctly in both the Claude Code CLI and the Desktop App (which may not source your shell profile).
 
-Tells Claude to read `.ato_focus_auto.md` at session start — automatically, every time.
+#### 📋 `CLAUDE.md` — Standing Session Instruction
+
+Tells Claude to read `.ato_focus_auto.md` at the start of every session — automatically, with no user action required.
 
 #### 💾 `DECISIONS.md` — Persistent Memory
 
-A separate memory file that survives context resets (see below).
+A separate file for decisions, in-progress work, and gotchas. Committed to git. Loaded every session. See [Persistent Memory](#-persistent-memory-ato-mem).
 
 ---
 
 ### 💾 Persistent Memory `ato mem`
 
-**The problem:** Claude Code context resets wipe out everything — decisions made, work in progress, gotchas discovered. You have to re-explain it all from scratch.
+**The problem:** Claude Code context resets wipe everything — decisions made, work in progress, gotchas you discovered. You re-explain from scratch every time.
 
-**The solution:** `DECISIONS.md` — committed to git, auto-synced, loaded at every session start.
+**The solution:** `DECISIONS.md` — committed to git, auto-synced, auto-loaded at every session start.
 
 ```bash
 # Log a decision
@@ -139,20 +165,20 @@ ato mem "decided to use Redis instead of Postgres for session storage"
 # Track work in progress
 ato mem --wip "auth middleware — 70% done, next: token refresh"
 
-# Add a gotcha / watch-out
+# Add a gotcha
 ato mem --warn "never touch bin/legacy-migrate.sh — breaks prod silently"
 
-# Mark WIP as complete
+# Mark WIP as complete (removes it)
 ato mem --done "auth middleware"
 
-# See everything
+# View everything
 ato mem --list
 
 # Start fresh
 ato mem --clear
 ```
 
-Your `DECISIONS.md` after the above:
+After the above, your `DECISIONS.md` looks like:
 
 ```markdown
 ## Active work
@@ -165,59 +191,122 @@ Your `DECISIONS.md` after the above:
 - never touch bin/legacy-migrate.sh — breaks prod silently
 ```
 
-After any context reset, Claude reads this and picks up exactly where you left off.
+After any context reset, Claude reads this and continues exactly where you left off — no re-explaining needed.
 
 ---
 
 ### 🔄 How It Works
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  ato init  (once per project)                           │
-│                                                         │
-│  Scan project → analyze imports → git co-change        │
-│       ↓                                                 │
-│  CONTEXT.md      ← architecture + critical path         │
-│  DECISIONS.md    ← persistent memory (empty to start)  │
-│  CLAUDE.md       ← standing session instruction        │
-│  settings.json   ← UserPromptSubmit + Stop hooks       │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────────┐
-│  open claude  (every session)                           │
-│                                                         │
-│  UserPromptSubmit hook fires                            │
-│       ↓                                                 │
-│  ato go --quiet → .ato_focus_auto.md                   │
-│    contains: CONTEXT.md + DECISIONS.md + file contents  │
-│       ↓                                                 │
-│  CLAUDE.md: "read .ato_focus_auto.md — no questions"   │
-│       ↓                                                 │
-│  Claude starts with full context. No exploration.       │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────────┐
-│  session ends                                           │
-│                                                         │
-│  Stop hook → ato sync                                   │
-│    → CONTEXT.md updated                                 │
-│    → git commit "chore: auto-sync ato context [skip ci]"│
-│    → lock cleared for next session                      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  ato init  (once per project)                               │
+│                                                             │
+│  Scan → import graph → git co-change analysis              │
+│       ↓                                                     │
+│  CONTEXT.md      ← architecture + critical path + coupling │
+│  DECISIONS.md    ← persistent memory (starts empty)        │
+│  CLAUDE.md       ← standing instruction: read focus file   │
+│  settings.json   ← UserPromptSubmit + Stop hooks wired     │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│  Open Claude (CLI or Desktop App — every session)           │
+│                                                             │
+│  UserPromptSubmit hook fires                                │
+│       ↓                                                     │
+│  ato go --quiet → builds .ato_focus_auto.md                │
+│    contains: CONTEXT.md + DECISIONS.md + file contents      │
+│       ↓                                                     │
+│  CLAUDE.md: "read .ato_focus_auto.md immediately"          │
+│       ↓                                                     │
+│  Claude starts with full context. Zero exploration.         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│  Session ends                                               │
+│                                                             │
+│  Stop hook → ato sync                                       │
+│    → CONTEXT.md updated with latest git activity           │
+│    → git commit "chore: auto-sync ato context [skip ci]"   │
+│    → session lock cleared for next session                  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Watch auto-focus activity live:
+Watch live activity:
 ```bash
 tail -f ~/.ato/run.log
 ```
 
 ---
 
-### 📊 `ato check` — Health Dashboard
+### 🖥️ Platform Support
+
+| Platform | CLI | Desktop App | Notes |
+|---|---|---|---|
+| **macOS (Terminal)** | ✅ Full | ✅ Full | Primary platform |
+| **macOS (Claude Code App)** | ✅ Full | ✅ Full | Hooks use absolute path — works even when app doesn't source shell profile |
+| **Linux** | ✅ Full | ✅ Full | |
+| **Windows + WSL2** | ✅ Full | ✅ Full | Hooks use `wsl bash -lc` so Windows Claude Code App can call them |
+| **Windows + Git Bash** | ⚠️ Partial | ❌ | Core commands work; hooks unreliable |
+| **Windows (native)** | ❌ | ❌ | Bash required |
+
+#### macOS — Desktop App
+
+No extra steps. `ato init` stores the absolute path to the ato binary in hook commands, so the Desktop App can find it even without sourcing your shell profile:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"command": "/Users/you/bin/ato go --quiet"}]}],
+    "Stop":             [{"hooks": [{"command": "/Users/you/bin/ato sync"}]}]
+  }
+}
+```
+
+#### Windows — Setup via WSL2
+
+```bash
+# Step 1 — Install WSL2 (PowerShell as Administrator)
+wsl --install
+
+# Step 2 — Inside WSL terminal, install ato
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
+source ~/.bashrc
+
+# Step 3 — Work on projects via Windows filesystem path
+#   ✅ Do this: accessible to both WSL and Claude Code Desktop
+cd /mnt/c/Users/$USER/projects/my-project
+ato init
+
+#   ❌ Not this: Claude Code Desktop can't open WSL filesystem paths
+# cd ~/projects/my-project
+```
+
+`ato init` automatically detects WSL and sets hooks to:
+```json
+{"command": "wsl bash -lc 'ato go --quiet'"}
+{"command": "wsl bash -lc 'ato sync'"}
+```
+
+Claude Code Desktop for Windows calls these and WSL executes them — fully transparent.
+
+#### `ato check` shows your platform
+
+```
+  Environment
+  ──────────────────────────────────────────────
+  Platform        macOS
+  ato binary      /Users/you/bin/ato
+  Hook command    /Users/you/bin/ato go --quiet
+```
+
+---
+
+### 📊 `ato check` Dashboard
 
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v3.2.0 — my-project                       ║
+║  ATO v3.4.0 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
@@ -235,6 +324,12 @@ tail -f ~/.ato/run.log
   ──────────────────────────────────────────────
   ██████░░░░░░░░░░░░░░░░░░  26%  safe to continue
   (estimate — for exact: /context inside Claude Code)
+
+  Environment
+  ──────────────────────────────────────────────
+  Platform        macOS
+  ato binary      /Users/you/bin/ato
+  Hook command    /Users/you/bin/ato go --quiet
 
   Git
   ──────────────────────────────────────────────
@@ -255,16 +350,17 @@ tail -f ~/.ato/run.log
 
 | Command | Description |
 |---|---|
-| `ato init` | Scan project, build code graph, wire hooks |
+| `ato init` | Scan project, build code graph, wire hooks, create all files |
 | `ato mem "decision"` | Log a decision that survives context reset |
 | `ato mem --wip "text"` | Track work in progress |
-| `ato mem --done "text"` | Mark WIP item as complete |
+| `ato mem --done "text"` | Remove completed WIP item |
 | `ato mem --warn "text"` | Add a gotcha / watch-out |
 | `ato mem --list` | Show all memory |
-| `ato note "text"` | Append a note to CONTEXT.md |
-| `ato go` | Manual focus (runs automatically on session start) |
+| `ato mem --clear` | Reset all memory (with confirmation) |
+| `ato note "text"` | Append a quick note to CONTEXT.md |
+| `ato go` | Manually rebuild focus file (runs automatically on session start) |
 | `ato go auth` | Focus on a specific topic |
-| `ato check` | Full health dashboard — context + session + savings |
+| `ato check` | Full health dashboard: context + session + environment + savings |
 | `ato audit` | Token budget breakdown per section |
 | `ato audit --reset` | Reset session stats |
 | `ato update` | Self-update to latest version |
@@ -273,7 +369,7 @@ tail -f ~/.ato/run.log
 <summary>⚙️ Power options</summary>
 
 ```bash
-ato go --budget 40k       # trim scope for Claude Pro token limits
+ato go --budget 40k       # trim scope to fit Claude Pro token limits
 ato audit --scope "*.ts"  # token cost of a specific file set
 ato mcp install           # register ato as MCP server in Claude Code
 ato task add "text"       # optional task tracking
@@ -287,51 +383,21 @@ tail -f ~/.ato/run.log    # watch auto-focus activity live
 
 ### 📈 Token Savings — Honest Numbers
 
-Savings are **estimates**, not exact measurements. The calculation:
+Savings are **estimates**, not exact measurements. The formula:
 
 ```
-saved = (all source files in project × ~6 tokens/line)
-      − (CONTEXT.md + DECISIONS.md + focus file overhead)
+saved per session =
+  (all source files in project × ~6 tokens/line)
+  − (CONTEXT.md + DECISIONS.md + focus file overhead)
 ```
 
-In practice, Claude without ato doesn't necessarily read your entire codebase — but ato ensures it reads *only* what's relevant, and starts with full architectural context. The real benefit is **faster, more accurate responses** with less back-and-forth exploration.
+The real benefit is not just token count — it's **faster, more accurate responses** with less exploratory back-and-forth. Claude starts with your architecture already loaded.
 
-Stats are stored in:
+Stats are stored locally:
 - `.ato-stats.json` — this project
 - `~/.ato/stats.json` — all projects (aggregate)
 
----
-
-### 🪟 Windows Support
-
-ato is a Bash script — it does not run natively on PowerShell or CMD. Windows support is via WSL2.
-
-| Environment | Status | Notes |
-|---|---|---|
-| **WSL2** | ✅ Full support | Recommended for Windows |
-| **Git Bash** | ⚠️ Partial | Core commands work, hooks may not |
-| **PowerShell / CMD** | ❌ Not supported | Bash required |
-| **macOS** | ✅ Full support | Primary platform |
-| **Linux** | ✅ Full support | |
-
-#### Setup on Windows (WSL2)
-
-```bash
-# 1. Install WSL2 (PowerShell as Administrator)
-wsl --install
-
-# 2. Inside WSL, install ato
-curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
-source ~/.bashrc
-
-# 3. Work on projects via Windows path (accessible to both WSL and Windows)
-cd /mnt/c/Users/$USER/projects/my-project
-ato init
-```
-
-`ato init` automatically detects WSL and sets hooks to `wsl ato go --quiet` and `wsl ato sync` so Claude Code Desktop for Windows can call them correctly.
-
-> **Project location matters:** Keep projects under `/mnt/c/...` (Windows filesystem), not `~/projects` (WSL filesystem). Claude Code Desktop can only open Windows paths.
+Reset anytime with `ato audit --reset`.
 
 ---
 
@@ -344,6 +410,18 @@ MIT © [Arjang Mousavi](https://github.com/aarjang)
 
 ## 🇮🇷 فارسی
 
+- [مشکل](#-مشکل)
+- [نصب](#-نصب)
+- [شروع سریع](#-شروع-سریع)
+- [ato init چه می‌کنه](#-ato-init-چه-می‌کنه)
+- [حافظه دائمی](#-حافظه-دائمی-ato-mem)
+- [چطور کار می‌کنه](#-چطور-کار-می‌کنه)
+- [پشتیبانی پلتفرم‌ها](#️-پشتیبانی-پلتفرم‌ها)
+- [داشبورد ato check](#-داشبورد-ato-check)
+- [مرجع دستورات](#-مرجع-دستورات)
+- [صرفه‌جویی توکن](#-صرفه‌جویی-توکن)
+- [مجوز](#-مجوز)
+
 ---
 
 ### ⚡ مشکل
@@ -353,8 +431,8 @@ MIT © [Arjang Mousavi](https://github.com/aarjang)
 ```
 ❌ بدون ato
    Claude می‌خونه: src/ + tests/ + configs = ~۵۰٬۰۰۰ توکن
-   task شما فقط نیاز داشت: ۲ فایل = ~۳٬۰۰۰ توکن
-   هدر رفته: ~۹۴٪ از budget توکن
+   task شما نیاز داشت: ۲ فایل = ~۳٬۰۰۰ توکن
+   هدر رفته: ~۹۴٪ از budget توکن — هر session
 
 ✅ با ato
    Claude می‌خونه: CONTEXT.md + focus file = ~۲٬۰۰۰ توکن
@@ -367,8 +445,9 @@ MIT © [Arjang Mousavi](https://github.com/aarjang)
 | شروع session | ~۵۰k توکن | ~۲k توکن |
 | Claude می‌خونه | کل codebase | فقط context مرتبط |
 | معماری شناخته‌شده | ❌ باید explore کنه | ✅ از قبل map شده |
-| تنظیم هر session | copy-paste دستی | کاملاً خودکار |
-| بعد از context reset | ❌ از دست رفته | ✅ DECISIONS.md |
+| تنظیم session | copy-paste دستی | کاملاً خودکار |
+| بعد از context reset | ❌ از صفر شروع | ✅ DECISIONS.md لود |
+| sync چند دستگاه | ❌ دستی | ✅ auto git commit |
 
 ---
 
@@ -379,28 +458,33 @@ curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
 source ~/.zshrc   # یا ~/.bashrc
 ```
 
+> روی macOS (Terminal + Desktop App)، Linux، و Windows از طریق WSL2 کار می‌کنه.
+> برای راه‌اندازی ویندوز، [پشتیبانی پلتفرم‌ها](#️-پشتیبانی-پلتفرم‌ها) رو ببین.
+
 ---
 
 ### 🚀 شروع سریع
 
 ```bash
-# مرحله ۱ — یک بار در هر پروژه
+# مرحله ۱ — یه بار در هر پروژه
 cd ~/your-project
 ato init
 
-# مرحله ۲ — هر session
+# مرحله ۲ — هر session (Terminal یا Desktop App)
 claude
 ```
 
-همین. بدون copy-paste. بدون `ato go` دستی. فقط Claude رو باز کن و تایپ کن.
+همین. بدون copy-paste. بدون قدم دستی. فقط Claude رو باز کن و تایپ کن.
 
-> **روی machine دیگه‌ای کار می‌کنی؟** فقط `git pull` بزن — context و memory خودکار sync می‌شن.
+> **از دستگاه دیگه‌ای کار می‌کنی؟** `git pull` بزن — context، memory، و stats خودکار sync می‌شن.
 
 ---
 
-### 🔬 `ato init` چه کاری انجام می‌ده
+### 🔬 `ato init` چه می‌کنه
 
-#### 🧠 Code Intelligence Graph می‌سازه → `CONTEXT.md`
+#### 🧠 Code Intelligence Graph → `CONTEXT.md`
+
+پروژه رو اسکن می‌کنه و یه نقشه ساختاری می‌سازه که Claude قبل از هر session می‌خونه:
 
 ```markdown
 ## Architecture
@@ -419,33 +503,40 @@ claude
   user.model.ts   ↔ user.service.ts       ۱۱ commit
 ```
 
-Claude این رو می‌خونه و فوری معماری پروژه رو می‌فهمه — **بدون باز کردن یک فایل**.
+Claude این رو می‌خونه و بدون باز کردن یه فایل معماری رو می‌فهمه.
+
+Graph از اینا ساخته می‌شه:
+- **Architecture layers** — از نام دایرکتوری‌ها و pattern‌های فایل‌ها
+- **Critical path** — فایل‌هایی که بیشترین import رو دارن + export surface
+- **Coupling map** — جفت‌هایی که همیشه با هم تغییر می‌کنن (۹۰ روز گذشته git)
 
 #### 🔗 Hooks رو وایر می‌کنه → `.claude/settings.json`
 
-| Hook | دستور | کِی |
+| Hook | کِی می‌زنه | عمل |
 |---|---|---|
-| `UserPromptSubmit` | `ato go --quiet` | قبل از هر session — focus file می‌سازه |
-| `Stop` | `ato sync` | بعد از هر session — CONTEXT.md آپدیت + auto-commit |
+| `UserPromptSubmit` | قبل از هر session | `ato go --quiet` → focus file می‌سازه |
+| `Stop` | بعد از هر session | `ato sync` → CONTEXT.md آپدیت + auto-commit |
 
-#### 📋 `CLAUDE.md` — دستور دائمی
+دستورات hook از **مسیر مطلق** binary ato استفاده می‌کنن — در هر دو CLI و Desktop App کار می‌کنه، حتی اگه app محیط shell رو source نکنه.
 
-به Claude می‌گه هر session `.ato_focus_auto.md` رو بخونه — خودکار، هر بار.
+#### 📋 `CLAUDE.md` — دستور دائمی session
+
+به Claude می‌گه اول هر session `.ato_focus_auto.md` رو بخونه — خودکار، بدون هیچ اقدامی از طرف کاربر.
 
 #### 💾 `DECISIONS.md` — حافظه دائمی
 
-یه فایل memory مجزا که context reset رو survive می‌کنه (ببین پایین‌تر).
+یه فایل مجزا برای تصمیمات، کارهای در جریان، و هشدارها. Commit می‌شه. هر session لود می‌شه. ادامه در [حافظه دائمی](#-حافظه-دائمی-ato-mem).
 
 ---
 
 ### 💾 حافظه دائمی `ato mem`
 
-**مشکل:** context reset در Claude Code همه چیز رو پاک می‌کنه — تصمیمات، کارهای نیمه‌تمام، مشکلات کشف‌شده. باید از اول همه چیز رو توضیح بدی.
+**مشکل:** context reset در Claude Code همه چیز رو پاک می‌کنه — تصمیمات، کارهای نیمه‌تمام، مشکلاتی که پیدا کردی. هر بار از صفر توضیح می‌دی.
 
-**راه‌حل:** `DECISIONS.md` — commit شده در git، خودکار sync، هر session لود می‌شه.
+**راه‌حل:** `DECISIONS.md` — commit شده در git، خودکار sync، اول هر session لود می‌شه.
 
 ```bash
-# ثبت یه تصمیم
+# ثبت تصمیم
 ato mem "تصمیم گرفتیم Redis بجای Postgres برای session storage استفاده کنیم"
 
 # ردیابی کار در جریان
@@ -454,10 +545,10 @@ ato mem --wip "auth middleware — ۷۰٪ تموم، بعدی: token refresh"
 # اضافه کردن هشدار
 ato mem --warn "bin/legacy-migrate.sh رو دست نزن — prod رو خاموش می‌کنه"
 
-# تموم کردن WIP
+# تموم کردن WIP (حذف می‌شه)
 ato mem --done "auth middleware"
 
-# نمایش همه حافظه
+# نمایش همه
 ato mem --list
 
 # پاک کردن همه
@@ -477,45 +568,45 @@ ato mem --clear
 - bin/legacy-migrate.sh رو دست نزن — prod رو خاموش می‌کنه
 ```
 
-بعد از هر context reset، Claude این رو می‌خونه و دقیقاً از همون جایی که بودی ادامه می‌ده.
+بعد از هر context reset، Claude این رو می‌خونه و دقیقاً از همون جا ادامه می‌ده.
 
 ---
 
 ### 🔄 چطور کار می‌کنه
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  ato init  (یک بار در هر پروژه)                        │
-│                                                         │
-│  اسکن پروژه → آنالیز imports → git co-change          │
-│       ↓                                                 │
-│  CONTEXT.md      ← معماری + critical path              │
-│  DECISIONS.md    ← حافظه دائمی (اول خالی)             │
-│  CLAUDE.md       ← دستور دائمی session                 │
-│  settings.json   ← هوک‌های UserPromptSubmit + Stop      │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────────┐
-│  باز کردن claude  (هر session)                         │
-│                                                         │
-│  UserPromptSubmit hook فایر می‌شه                      │
-│       ↓                                                 │
-│  ato go --quiet → .ato_focus_auto.md                   │
-│    شامل: CONTEXT.md + DECISIONS.md + محتوای فایل‌ها    │
-│       ↓                                                 │
-│  CLAUDE.md: ".ato_focus_auto.md رو بخون — بدون سوال"  │
-│       ↓                                                 │
-│  Claude با context کامل شروع می‌کنه. بدون exploration. │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────────┐
-│  پایان session                                          │
-│                                                         │
-│  Stop hook → ato sync                                   │
-│    → CONTEXT.md آپدیت می‌شه                           │
-│    → git commit خودکار                                  │
-│    → lock برای session بعدی پاک می‌شه                  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  ato init  (یه بار در هر پروژه)                            │
+│                                                             │
+│  اسکن → import graph → آنالیز git co-change               │
+│       ↓                                                     │
+│  CONTEXT.md      ← معماری + critical path + coupling       │
+│  DECISIONS.md    ← حافظه دائمی (اول خالی)                │
+│  CLAUDE.md       ← دستور: focus file رو بخون              │
+│  settings.json   ← هوک‌های UserPromptSubmit + Stop         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│  باز کردن Claude (CLI یا Desktop App — هر session)         │
+│                                                             │
+│  UserPromptSubmit hook فایر می‌شه                          │
+│       ↓                                                     │
+│  ato go --quiet → .ato_focus_auto.md می‌سازه              │
+│    شامل: CONTEXT.md + DECISIONS.md + محتوای فایل‌ها        │
+│       ↓                                                     │
+│  CLAUDE.md: ".ato_focus_auto.md رو فوری بخون"            │
+│       ↓                                                     │
+│  Claude با context کامل شروع می‌کنه. بدون exploration.    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│  پایان session                                              │
+│                                                             │
+│  Stop hook → ato sync                                       │
+│    → CONTEXT.md آپدیت با آخرین فعالیت git                │
+│    → git commit خودکار                                      │
+│    → lock session پاک برای session بعدی                    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 فعالیت auto-focus رو live ببین:
@@ -525,11 +616,74 @@ tail -f ~/.ato/run.log
 
 ---
 
-### 📊 `ato check` — داشبورد سلامت
+### 🖥️ پشتیبانی پلتفرم‌ها
+
+| پلتفرم | CLI | Desktop App | توضیح |
+|---|---|---|---|
+| **macOS (Terminal)** | ✅ کامل | ✅ کامل | Platform اصلی |
+| **macOS (Claude Code App)** | ✅ کامل | ✅ کامل | Hooks از مسیر مطلق استفاده می‌کنن |
+| **Linux** | ✅ کامل | ✅ کامل | |
+| **Windows + WSL2** | ✅ کامل | ✅ کامل | Hooks از `wsl bash -lc` استفاده می‌کنن |
+| **Windows + Git Bash** | ⚠️ ناقص | ❌ | دستورات اصلی کار می‌کنن؛ hooks نه |
+| **Windows (native)** | ❌ | ❌ | Bash لازمه |
+
+#### macOS — Desktop App
+
+قدم اضافه‌ای لازم نیست. `ato init` مسیر مطلق binary ato رو در hook ها ذخیره می‌کنه:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"command": "/Users/you/bin/ato go --quiet"}]}],
+    "Stop":             [{"hooks": [{"command": "/Users/you/bin/ato sync"}]}]
+  }
+}
+```
+
+#### ویندوز — راه‌اندازی از طریق WSL2
+
+```bash
+# ۱. نصب WSL2 (PowerShell به عنوان Administrator)
+wsl --install
+
+# ۲. داخل WSL terminal، نصب ato
+curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
+source ~/.bashrc
+
+# ۳. روی پروژه‌ها از طریق path ویندوز کار کن
+#   ✅ درست: هم WSL هم Claude Code Desktop می‌تونن دسترسی داشته باشن
+cd /mnt/c/Users/$USER/projects/my-project
+ato init
+
+#   ❌ اشتباه: Claude Code Desktop نمی‌تونه WSL filesystem path رو باز کنه
+# cd ~/projects/my-project
+```
+
+`ato init` به‌صورت خودکار WSL رو detect می‌کنه و hooks رو اینطوری می‌نویسه:
+```json
+{"command": "wsl bash -lc 'ato go --quiet'"}
+{"command": "wsl bash -lc 'ato sync'"}
+```
+
+Claude Code Desktop ویندوز اینا رو صدا می‌زنه و WSL اجراشون می‌کنه — کاملاً شفاف.
+
+#### بخش Environment در `ato check`
+
+```
+  Environment
+  ──────────────────────────────────────────────
+  Platform        macOS
+  ato binary      /Users/you/bin/ato
+  Hook command    /Users/you/bin/ato go --quiet
+```
+
+---
+
+### 📊 داشبورد `ato check`
 
 ```
 ╔══════════════════════════════════════════════════╗
-║  ATO v3.2.0 — my-project                       ║
+║  ATO v3.4.0 — my-project                       ║
 ╚══════════════════════════════════════════════════╝
 
   Context
@@ -546,6 +700,12 @@ tail -f ~/.ato/run.log
   Session
   ──────────────────────────────────────────────
   ██████░░░░░░░░░░░░░░░░░░  ۲۶٪  ادامه بده
+
+  Environment
+  ──────────────────────────────────────────────
+  Platform        macOS
+  ato binary      /Users/you/bin/ato
+  Hook command    /Users/you/bin/ato go --quiet
 
   Git
   ──────────────────────────────────────────────
@@ -566,16 +726,17 @@ tail -f ~/.ato/run.log
 
 | دستور | توضیح |
 |---|---|
-| `ato init` | اسکن پروژه، ساخت code graph، وایر کردن hooks |
+| `ato init` | اسکن پروژه، code graph، وایر hooks، ساخت همه فایل‌ها |
 | `ato mem "decision"` | ثبت تصمیم که context reset رو survive می‌کنه |
 | `ato mem --wip "text"` | ردیابی کار در جریان |
-| `ato mem --done "text"` | تموم کردن WIP |
+| `ato mem --done "text"` | حذف WIP تموم‌شده |
 | `ato mem --warn "text"` | اضافه کردن هشدار / gotcha |
 | `ato mem --list` | نمایش همه حافظه |
-| `ato note "text"` | اضافه کردن یادداشت به CONTEXT.md |
-| `ato go` | focus دستی (خودکار اجرا می‌شه) |
+| `ato mem --clear` | پاک کردن همه حافظه (با تأیید) |
+| `ato note "text"` | اضافه کردن یادداشت سریع به CONTEXT.md |
+| `ato go` | ساخت دستی focus file (خودکار اجرا می‌شه) |
 | `ato go auth` | focus روی topic مشخص |
-| `ato check` | داشبورد کامل سلامت |
+| `ato check` | داشبورد کامل: context + session + environment + savings |
 | `ato audit` | breakdown budget توکن هر بخش |
 | `ato audit --reset` | ریست آمار sessions |
 | `ato update` | آپدیت به آخرین نسخه |
@@ -598,51 +759,21 @@ tail -f ~/.ato/run.log    # مشاهده live فعالیت auto-focus
 
 ### 📈 صرفه‌جویی توکن — اعداد واقعی
 
-صرفه‌جویی‌ها **تخمین** هستن، نه اندازه‌گیری دقیق. محاسبه:
+صرفه‌جویی‌ها **تخمین** هستن، نه اندازه‌گیری دقیق. فرمول:
 
 ```
-صرفه‌جویی = (همه فایل‌های سورس پروژه × ~۶ توکن/خط)
-           − (CONTEXT.md + DECISIONS.md + focus file)
+صرفه‌جویی هر session =
+  (همه فایل‌های سورس × ~۶ توکن/خط)
+  − (CONTEXT.md + DECISIONS.md + focus file)
 ```
 
-در عمل، Claude بدون ato لزوماً کل codebase رو نمی‌خونه — ولی ato مطمئن می‌شه فقط چیز مرتبط خونده می‌شه، و با context معماری کامل شروع می‌کنه. سود واقعی **پاسخ‌های سریع‌تر و دقیق‌تر** با کمتر exploration هست.
+سود واقعی فقط تعداد توکن نیست — **پاسخ‌های سریع‌تر و دقیق‌تر** با کمتر exploration هست. Claude از اول با معماری کامل شروع می‌کنه.
 
 آمار ذخیره می‌شه در:
 - `.ato-stats.json` — این پروژه
-- `~/.ato/stats.json` — همه پروژه‌ها (کلی)
+- `~/.ato/stats.json` — همه پروژه‌ها (aggregate)
 
----
-
-### 🪟 پشتیبانی از ویندوز
-
-ato یه Bash script هست — روی PowerShell یا CMD کار نمی‌کنه. پشتیبانی ویندوز از طریق WSL2 هست.
-
-| محیط | وضعیت | توضیح |
-|---|---|---|
-| **WSL2** | ✅ پشتیبانی کامل | توصیه‌شده برای ویندوز |
-| **Git Bash** | ⚠️ ناقص | دستورات اصلی کار می‌کنن، hooks شاید نه |
-| **PowerShell / CMD** | ❌ پشتیبانی نمی‌شه | Bash لازمه |
-| **macOS** | ✅ پشتیبانی کامل | Platform اصلی |
-| **Linux** | ✅ پشتیبانی کامل | |
-
-#### راه‌اندازی روی ویندوز (WSL2)
-
-```bash
-# ۱. نصب WSL2 (PowerShell به عنوان Administrator)
-wsl --install
-
-# ۲. داخل WSL، نصب ato
-curl -fsSL https://raw.githubusercontent.com/aarjang/ato/main/install.sh | bash
-source ~/.bashrc
-
-# ۳. روی پروژه‌ها از طریق path ویندوز کار کن
-cd /mnt/c/Users/$USER/projects/my-project
-ato init
-```
-
-`ato init` به‌صورت خودکار WSL رو detect می‌کنه و hooks رو با prefix `wsl` می‌نویسه تا Claude Code Desktop بتونه اونها رو صدا بزنه.
-
-> **مکان پروژه مهمه:** پروژه‌ها رو زیر `/mnt/c/...` نگه‌دار (filesystem ویندوز)، نه `~/projects` (filesystem WSL). Claude Code Desktop فقط path‌های ویندوز رو می‌تونه باز کنه.
+هر وقت خواستی با `ato audit --reset` ریست کن.
 
 ---
 
