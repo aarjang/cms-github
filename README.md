@@ -135,6 +135,7 @@ tail -f ~/.ato/run.log
 | `ato note "text"` | ثبت تصمیم مهم حین session |
 | `ato check` | وضعیت پروژه + context usage + savings |
 | `ato audit` | token budget per section |
+| `ato audit --reset` | ریست کردن آمار sessions |
 | `ato update` | آپدیت به آخرین نسخه |
 
 دستورات power:
@@ -176,12 +177,17 @@ ato task add/done         # task tracking اختیاری
   Status          clean
   Last commit     "fix: auth middleware" (2 hours ago)
 
-  Savings
+  Savings  (estimate — based on project size vs. focus file size)
   ──────────────────────────────────────────────
   Sessions        12
   Saved           ~847k tokens  ≈ $2.54
   Last session    2026-06-28
 ```
+
+> **درباره اعداد savings:** این‌ها تخمین هستن، نه اندازه‌گیری دقیق. محاسبه اینطوره:
+> `saved = (همه سورس فایل‌ها) − (CONTEXT.md + focus file)`. در واقع Claude بدون ato هم لزوماً کل codebase رو نمی‌خونه — ولی ato مطمئن می‌شه که فقط چیز مرتبط رو می‌خونه.
+
+> **آمار در:** `.ato-stats.json` (این پروژه) و `~/.ato/stats.json` (همه پروژه‌ها)
 
 ---
 
