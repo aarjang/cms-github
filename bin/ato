@@ -624,6 +624,7 @@ _topic_focus() {
 }
 
 _auto_focus() {
+  local budget_k="${1:-0}"
   [[ ! -f "$CONTEXT_FILE" ]] && { error "CONTEXT.md not found — run: ato init"; exit 1; }
 
   local branch modified_files recent_files all_focus_files focus_area focused
@@ -648,6 +649,26 @@ _auto_focus() {
     warn "No recent changes detected — nothing to focus on."
     info "Make some changes or run: ato focus <task-id>"
     return
+  fi
+
+  # If budget set, trim file list so total lines fit within budget
+  if [[ "$budget_k" -gt 0 ]]; then
+    local budget_tokens=$(( budget_k * 1000 ))
+    local ctx_overhead=$(( $(wc -l < "$CONTEXT_FILE") * TOKENS_PER_LINE + 33000 ))
+    local remaining=$(( budget_tokens - ctx_overhead ))
+    local trimmed="" running=0
+    while IFS= read -r f; do
+      [[ -z "$f" || ! -f "$f" ]] && continue
+      local flines
+      flines=$(wc -l < "$f" 2>/dev/null || echo 0)
+      local ftok=$(( flines * TOKENS_PER_LINE ))
+      if [[ $(( running + ftok )) -le $remaining ]]; then
+        trimmed="${trimmed}${f}"$'\n'
+        running=$(( running + ftok ))
+      fi
+    done <<< "$all_focus_files"
+    all_focus_files=$(echo "$trimmed" | grep -v "^$" || true)
+    info "Budget: ${budget_k}k tokens — scope trimmed to fit (~$(fmt_tokens $running) for files)"
   fi
 
   # Derive focus area name from branch (strip common prefixes)
@@ -901,10 +922,31 @@ EOF
 }
 
 cmd_focus() {
+  # Parse --budget flag anywhere in args
+  local budget_k=0 args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --budget)
+        shift
+        # accept "40k", "40K", or "40000"
+        budget_k=$(echo "${1:-0}" | sed 's/[kK]$//')
+        [[ "$budget_k" -gt 0 ]] 2>/dev/null || budget_k=0
+        ;;
+      --budget=*)
+        local bval="${1#--budget=}"
+        budget_k=$(echo "$bval" | sed 's/[kK]$//')
+        [[ "$budget_k" -gt 0 ]] 2>/dev/null || budget_k=0
+        ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  set -- "${args[@]+"${args[@]}"}"
+
   local task_id="${1:-}"
 
   if [[ -z "$task_id" ]]; then
-    _auto_focus
+    _auto_focus "$budget_k"
     return
   fi
 
@@ -1411,6 +1453,30 @@ EOF
   esac
 }
 
+# ─── Note ────────────────────────────────────────────────────────────
+cmd_note() {
+  local note="${1:-}"
+  [[ -z "$note" ]] && { error "Usage: ato note \"decision or key fact\""; exit 1; }
+  [[ ! -f "$CONTEXT_FILE" ]] && { error "CONTEXT.md not found — run: ato init"; exit 1; }
+
+  local today
+  today=$(date +%Y-%m-%d\ %H:%M)
+
+  # Append to existing Session Notes section, or create it
+  if grep -q "^## Session Notes" "$CONTEXT_FILE" 2>/dev/null; then
+    # Insert note after the ## Session Notes heading
+    awk -v note="- [$today] $note" '
+      /^## Session Notes/ { print; print note; next }
+      { print }
+    ' "$CONTEXT_FILE" > "$CONTEXT_FILE.tmp" && mv "$CONTEXT_FILE.tmp" "$CONTEXT_FILE"
+  else
+    printf '\n## Session Notes\n- [%s] %s\n' "$today" "$note" >> "$CONTEXT_FILE"
+  fi
+
+  success "Note saved to CONTEXT.md (survives compaction)"
+  dim "  $note"
+}
+
 # ─── Slim ────────────────────────────────────────────────────────────
 cmd_slim() {
   local target_file="${1:-$CLAUDE_FILE}"
@@ -1707,6 +1773,8 @@ cmd_help() {
   echo -e "${BOLD}ALSO AVAILABLE (optional task tracking)${RESET}"
   echo "  add \"task\"           Add a task to TASKS.md"
   echo "  focus [number]       Start a scoped session for a specific task"
+  echo "  focus --budget 40k   Trim file scope to fit within token budget"
+  echo "  note \"text\"          Save a decision to CONTEXT.md (survives compaction)"
   echo "  done <number>        Mark task done + archive"
   echo ""
   echo -e "${BOLD}AUTO-SYNC${RESET}"
@@ -1729,6 +1797,7 @@ main() {
     scope)          cmd_scope "$@" ;;
     trim)           cmd_trim "$@" ;;
     slim)           cmd_slim "$@" ;;
+    note)           cmd_note "$@" ;;
     doctor)         cmd_doctor ;;
     checkpoint)     cmd_checkpoint ;;
     prompt)         cmd_prompt ;;
