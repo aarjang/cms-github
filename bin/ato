@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="2.6.0"
+VERSION="2.7.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -1885,47 +1885,203 @@ cmd_checkpoint() {
   echo ""
 }
 
+# ─── Check (merged: status + doctor + checkpoint) ────────────────────
+cmd_check() {
+  local WINDOW=200000 RESERVED=33000
+  local project
+  project="$(basename "$PWD")"
+  local W=50
+
+  echo ""
+  printf "${BOLD}╔%${W}s╗${RESET}\n" | tr ' ' '═'
+  printf "${BOLD}║${RESET}%-${W}s${BOLD}║${RESET}\n" "  ATO v${VERSION} — ${project}"
+  printf "${BOLD}╚%${W}s╝${RESET}\n" | tr ' ' '═'
+  echo ""
+
+  # ── Context files ──────────────────────────────────────────────
+  echo -e "  ${BOLD}Context${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+
+  local startup_tokens=0 issues=0
+  local ctx_lines=0 cl_lines=0 mem_tokens=0
+
+  if [[ -f "$CONTEXT_FILE" ]]; then
+    ctx_lines=$(wc -l < "$CONTEXT_FILE")
+    local ctx_tok=$(( ctx_lines * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + ctx_tok ))
+    local ctx_tag
+    [[ $ctx_lines -gt 200 ]] && { ctx_tag="${YELLOW}⚠ trim${RESET}"; issues=$(( issues+1 )); } \
+                              || ctx_tag="${GREEN}lean ✓${RESET}"
+    printf "  ${GREEN}✓${RESET}  %-16s %3d lines  ~%-5s  " "CONTEXT.md" "$ctx_lines" "$(fmt_tokens $ctx_tok)"
+    echo -e "$ctx_tag"
+  else
+    echo -e "  ${RED}✗${RESET}  CONTEXT.md     ${RED}missing — run: ato init${RESET}"
+    issues=$(( issues+1 ))
+  fi
+
+  if [[ -f "$CLAUDE_FILE" ]]; then
+    cl_lines=$(wc -l < "$CLAUDE_FILE")
+    local cl_tok=$(( cl_lines * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + cl_tok ))
+    local cl_tag
+    [[ $cl_lines -gt 200 ]] && { cl_tag="${YELLOW}⚠ slim${RESET}"; issues=$(( issues+1 )); } \
+                             || cl_tag="${GREEN}lean ✓${RESET}"
+    printf "  ${GREEN}✓${RESET}  %-16s %3d lines  ~%-5s  " "CLAUDE.md" "$cl_lines" "$(fmt_tokens $cl_tok)"
+    echo -e "$cl_tag"
+  fi
+
+  if [[ -d ".claude/memory" ]]; then
+    local mem_lines
+    mem_lines=$(find ".claude/memory" -type f 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}') || mem_lines=0
+    mem_tokens=$(( ${mem_lines:-0} * TOKENS_PER_LINE ))
+    startup_tokens=$(( startup_tokens + mem_tokens ))
+    [[ $mem_tokens -gt 5000 ]] && { printf "  ${YELLOW}!${RESET}  %-16s ~%s  ${YELLOW}⚠ large${RESET}\n" ".claude/memory" "$(fmt_tokens $mem_tokens)"; issues=$(( issues+1 )); }
+  fi
+
+  if [[ -f ".claude/settings.json" ]] && grep -q "ato sync" .claude/settings.json 2>/dev/null; then
+    printf "  ${GREEN}✓${RESET}  %-16s %s\n" "Stop-hook" "active"
+  else
+    printf "  ${YELLOW}!${RESET}  %-16s %s\n" "Stop-hook" "not set — run: ato init"
+  fi
+
+  local available=$(( WINDOW - RESERVED - startup_tokens ))
+  local avail_pct=$(( available * 100 / WINDOW ))
+  echo ""
+  if [[ $available -gt 100000 ]]; then
+    echo -e "  ${GREEN}Available for work: ~$(fmt_tokens $available) / ~200k tokens (${avail_pct}% free)${RESET}"
+  elif [[ $available -gt 60000 ]]; then
+    echo -e "  ${YELLOW}Available for work: ~$(fmt_tokens $available) / ~200k tokens (${avail_pct}% free)${RESET}"
+  else
+    echo -e "  ${RED}Available for work: ~$(fmt_tokens $available) / ~200k tokens — startup overhead too high${RESET}"
+  fi
+  echo ""
+
+  # ── Session context usage ──────────────────────────────────────
+  echo -e "  ${BOLD}Session${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+
+  local focus_tokens=0
+  [[ -f ".ato_focus_auto.md" ]] && focus_tokens=$(( $(wc -l < ".ato_focus_auto.md") * TOKENS_PER_LINE ))
+  local conversation_est=$(( 20 * 800 ))
+  local total_est=$(( RESERVED + startup_tokens + focus_tokens + conversation_est ))
+  [[ $total_est -gt $WINDOW ]] && total_est=$WINDOW
+  local used_pct=$(( total_est * 100 / WINDOW ))
+  local bar_len=24
+  local filled=$(( bar_len * used_pct / 100 ))
+  [[ $filled -gt $bar_len ]] && filled=$bar_len
+  local empty=$(( bar_len - filled ))
+  local filled_s="" empty_s=""
+  local i=0
+  while [[ $i -lt $filled ]]; do filled_s="${filled_s}█"; i=$(( i+1 )); done
+  i=0
+  while [[ $i -lt $empty ]];  do empty_s="${empty_s}░"; i=$(( i+1 )); done
+
+  if [[ $used_pct -lt 60 ]]; then
+    printf "  ${GREEN}%s%s${RESET}  %d%%  safe to continue\n" "$filled_s" "$empty_s" "$used_pct"
+  elif [[ $used_pct -lt 75 ]]; then
+    printf "  ${YELLOW}%s%s${RESET}  %d%%  wrap up soon\n" "$filled_s" "$empty_s" "$used_pct"
+  else
+    printf "  ${RED}%s%s${RESET}  %d%%  stop now — quality degrades above 75%%\n" "$filled_s" "$empty_s" "$used_pct"
+  fi
+  dim "  (estimate — for exact: /context inside Claude Code)"
+  echo ""
+
+  # ── Git ────────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Git${RESET}"
+  printf "  %s\n" "$(printf '─%.0s' {1..46})"
+  local git_branch git_state git_last
+  git_branch=$(git branch --show-current 2>/dev/null || echo "n/a")
+  local mod unt
+  mod=$(git status --short 2>/dev/null | grep -c "^[MADRCU ]" || true); mod=${mod:-0}
+  unt=$(git status --short 2>/dev/null | grep -c '^??' || true); unt=${unt:-0}
+  if [[ $mod -eq 0 && $unt -eq 0 ]]; then
+    git_state="${GREEN}clean${RESET}"
+  else
+    git_state="${mod} modified, ${unt} untracked"
+  fi
+  git_last=$(git log --oneline -1 --format='"%s" (%ar)' 2>/dev/null || echo "n/a")
+  printf "  %-14s  %s\n" "Branch" "$git_branch"
+  printf "  %-14s  " "Status"; echo -e "$git_state"
+  printf "  %-14s  %s\n" "Last commit" "$git_last"
+  echo ""
+
+  # ── Savings ────────────────────────────────────────────────────
+  if [[ -f "$LOCAL_STATS" ]]; then
+    local sessions tokens_saved last_s
+    sessions=$(json_get "$LOCAL_STATS" "sessions")
+    tokens_saved=$(json_get "$LOCAL_STATS" "tokens_saved")
+    last_s=$(json_get "$LOCAL_STATS" "last_session" | cut -c1-10)
+    echo -e "  ${BOLD}Savings${RESET}"
+    printf "  %s\n" "$(printf '─%.0s' {1..46})"
+    printf "  %-14s  %s\n" "Sessions" "$sessions"
+    if [[ "${tokens_saved:-0}" -gt 0 ]]; then
+      local cost_usd
+      cost_usd=$(echo "scale=2; $tokens_saved * 3 / 1000000" | bc 2>/dev/null || echo "?")
+      printf "  %-14s  ~%s tokens  ≈ \$%s\n" "Saved" "$(fmt_tokens $tokens_saved)" "$cost_usd"
+    else
+      printf "  %-14s  none yet — run: ato go\n" "Saved"
+    fi
+    printf "  %-14s  %s\n" "Last session" "${last_s:-none}"
+    echo ""
+  fi
+}
+
+# ─── Audit (merged: trim + slim + scope + reset-stats) ───────────────
+cmd_audit() {
+  local flag="${1:-}"
+
+  if [[ "$flag" == "--reset" ]]; then
+    cmd_reset_stats "${2:-}"
+    return
+  fi
+
+  if [[ "$flag" == "--scope" ]]; then
+    cmd_scope "${2:-*.ts}"
+    return
+  fi
+
+  # Default: CONTEXT.md per-section breakdown + CLAUDE.md size
+  cmd_trim
+  echo ""
+  if [[ -f "$CLAUDE_FILE" ]]; then
+    local cl_lines
+    cl_lines=$(wc -l < "$CLAUDE_FILE")
+    if [[ $cl_lines -gt 50 ]]; then
+      echo -e "  ${BOLD}CLAUDE.md breakdown${RESET}"
+      printf "  %s\n" "$(printf '─%.0s' {1..46})"
+      cmd_slim "$CLAUDE_FILE"
+    else
+      printf "  ${GREEN}✓${RESET}  CLAUDE.md: $cl_lines lines — lean\n"
+    fi
+  fi
+}
+
 # ─── Help ────────────────────────────────────────────────────────────
 cmd_help() {
   echo ""
   echo -e "${BOLD}ato v${VERSION}${RESET} — AI Token Optimizer for Claude Code"
-  echo -e "${DIM}Reduce token usage 70-90% per session. No task system. Just context.${RESET}"
+  echo -e "${DIM}Reduce Claude Code token usage 70-90% per session.${RESET}"
   echo ""
   echo -e "${BOLD}WORKFLOW${RESET}"
   echo ""
-  echo -e "  ${CYAN}1.${RESET}  ato init          Scan project → generate CONTEXT.md + CLAUDE.md"
-  echo -e "  ${CYAN}2.${RESET}  claude            Enter Claude Code — it reads CONTEXT.md and asks"
-  echo -e "                    \"What are we working on today?\""
-  echo -e "  ${CYAN}3.${RESET}  Work freely       No tasks. No scope. Just talk to Claude."
-  echo -e "  ${CYAN}4.${RESET}  Session ends      Stop-hook runs ato sync → CONTEXT.md updated"
+  echo -e "  ${CYAN}1.${RESET}  ${BOLD}ato init${RESET}   Once per project — scans repo, generates CONTEXT.md"
+  echo -e "  ${CYAN}2.${RESET}  ${BOLD}ato go${RESET}     Before each session — auto-detects work area from git"
+  echo -e "  ${CYAN}3.${RESET}  Work       Claude reads the focused file, stays on-topic"
+  echo -e "  ${CYAN}4.${RESET}  Auto-sync  Stop-hook runs ato sync → savings recorded"
   echo ""
   echo -e "${BOLD}COMMANDS${RESET}"
-  echo "  init [name]          Scan project → generate CONTEXT.md + CLAUDE.md"
-  echo "  sync                 Refresh CONTEXT.md (branch, changed files, git log)"
-  echo "  status               Project health, token budget, git state, stats"
-  echo "  stats [local|global] Token savings breakdown"
-  echo "  scope <pattern>      Estimate token cost of a file set (e.g. '*.ts')"
-  echo "  trim                 Audit CONTEXT.md for bloat (target: <200 lines)"
-  echo "  slim [file]          Show CLAUDE.md sections by size + how to reduce"
-  echo "  doctor               Audit startup token overhead (CLAUDE.md, memory, CONTEXT.md)"
-  echo "  checkpoint           Estimate current context usage + stopping recommendation"
-  echo "  prompt               Print the optimal Claude Code session starter"
-  echo "  update               Update ato + templates to latest version"
-  echo "  reset-stats [global] Reset stats counters"
-  echo "  mcp                  Start ato as an MCP server (stdio)"
-  echo "  mcp install          Register ato MCP server in .claude/settings.json"
-  echo "  help                 Show this help"
   echo ""
-  echo -e "${BOLD}ALSO AVAILABLE (optional task tracking)${RESET}"
-  echo "  add \"task\"           Add a task to TASKS.md"
-  echo "  focus [number]       Start a scoped session for a specific task"
-  echo "  focus --budget 40k   Trim file scope to fit within token budget"
-  echo "  note \"text\"          Save a decision to CONTEXT.md (survives compaction)"
-  echo "  done <number>        Mark task done + archive"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "init [name]"   "Scan project → CONTEXT.md + CLAUDE.md + stop-hook"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "go [topic]"    "Auto-focus from git (or focus on a topic)"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "note \"text\""  "Save a decision to CONTEXT.md (survives compaction)"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "check"         "Project health + context usage + savings"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "audit"         "Token budget per section + CLAUDE.md size audit"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "update"        "Self-update to latest version"
   echo ""
-  echo -e "${BOLD}AUTO-SYNC${RESET}"
-  echo "  ato init installs a Claude Code stop-hook → ato sync runs after every"
-  echo "  session automatically. CONTEXT.md always reflects the latest state."
+  echo -e "  ${DIM}ato go --budget 40k   Trim scope for Pro plan token limits${RESET}"
+  echo -e "  ${DIM}ato audit --scope '*.ts'  Token cost of a file set${RESET}"
+  echo -e "  ${DIM}ato mcp install       Register as MCP server in Claude Code${RESET}"
+  echo -e "  ${DIM}ato task add/done     Optional task tracking${RESET}"
   echo ""
 }
 
@@ -1933,26 +2089,40 @@ cmd_help() {
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
+    # ── Primary commands ──────────────────────────────────────────
     init)           cmd_init "$@" ;;
+    go)             cmd_focus "$@" ;;      # primary name
+    note)           cmd_note "$@" ;;
+    check)          cmd_check ;;           # merged: status+doctor+checkpoint
+    audit)          cmd_audit "$@" ;;      # merged: trim+slim+scope+reset
+    update)         cmd_update ;;
     sync)           cmd_sync ;;
-    add)            cmd_add "$@" ;;
+    mcp)            cmd_mcp "$@" ;;
+    task)                                  # ato task add/done
+      local sub="${1:-}"; shift || true
+      case "$sub" in
+        add)  cmd_add "$@" ;;
+        done) cmd_done "$@" ;;
+        *)    error "Usage: ato task add|done"; exit 1 ;;
+      esac
+      ;;
+    # ── Backward-compatible aliases (still work, hidden from help) ─
     focus)          cmd_focus "$@" ;;
+    add)            cmd_add "$@" ;;
     done)           cmd_done "$@" ;;
     stats)          cmd_stats "$@" ;;
     status)         cmd_status "$@" ;;
     scope)          cmd_scope "$@" ;;
     trim)           cmd_trim "$@" ;;
     slim)           cmd_slim "$@" ;;
-    note)           cmd_note "$@" ;;
     doctor)         cmd_doctor ;;
     checkpoint)     cmd_checkpoint ;;
     prompt)         cmd_prompt ;;
-    update)         cmd_update ;;
     reset-stats)    cmd_reset_stats "$@" ;;
-    mcp)            cmd_mcp "$@" ;;
     help|-h|--help) cmd_help ;;
     *)
       error "Unknown command: $cmd"
+      echo ""
       cmd_help
       exit 1
       ;;
