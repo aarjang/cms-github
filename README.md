@@ -190,6 +190,37 @@ ato task add/done         # task tracking اختیاری
 > **درباره اعداد savings:** این‌ها تخمین هستن، نه اندازه‌گیری دقیق. محاسبه اینطوره:
 > `saved = (همه سورس فایل‌ها) − (CONTEXT.md + focus file)`. در واقع Claude بدون ato هم لزوماً کل codebase رو نمی‌خونه — ولی ato مطمئن می‌شه که فقط چیز مرتبط رو می‌خونه.
 
+---
+
+## بهینه‌سازی توکن / Token Optimizations
+
+### Focus file با محتوای فایل‌ها
+
+`ato go` محتوای فایل‌های مرتبط رو (حداکثر ۸۰ خط هر فایل) مستقیم داخل focus file می‌ذاره. Claude از اول کد رو می‌بینه — بدون نیاز به tool call برای خوندن فایل‌ها.
+
+```
+## File contents (first 80 lines each — ask to see more):
+
+### `src/services/auth.ts`  (142 lines)
+```ts
+export async function authenticateUser(email: string, password: string) {
+  ...
+}
+... (62 more lines — ask to see them)
+```
+```
+
+هر tool call که avoid می‌شه = **~500 توکن** صرفه‌جویی. روی ۱۰ پیام = ~5k توکن.
+
+### Focus file size warning
+
+```
+✓  Focus file       ~2k        ← lean
+!  Focus file       ~8k    ⚠ large — run: ato go --budget 40k
+```
+
+`ato check` اندازه focus file رو نشون می‌ده. بزرگ‌تر از 3k = هشدار.
+
 > **آمار در:** `.ato-stats.json` (این پروژه) و `~/.ato/stats.json` (همه پروژه‌ها)
 
 ---
