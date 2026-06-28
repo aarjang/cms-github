@@ -2,6 +2,7 @@
 <!-- Claude Code reads this automatically at the start of every session -->
 
 ## On startup
+1. If `.ato_focus_auto.md` exists, read it immediately and follow all session rules inside it. Do not ask — just do it.
 1. Read `CONTEXT.md` fully — it is the complete map of this project
 2. Say exactly: "Ready. What are we working on today?"
 3. Wait for the user's answer before doing anything else

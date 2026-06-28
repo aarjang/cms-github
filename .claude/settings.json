@@ -1,4 +1,5 @@
 {
+    "UserPromptSubmit": [{"matcher":"","hooks":[{"type":"command","command":"ato go --quiet"}]}],
   "hooks": {
     "Stop": [
       {
