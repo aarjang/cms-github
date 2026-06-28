@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="2.8.0"
+VERSION="2.9.0"
 CONTEXT_FILE="CONTEXT.md"
 TASKS_FILE="TASKS.md"
 DECISIONS_FILE="DECISIONS.md"
@@ -14,6 +14,7 @@ CLAUDE_FILE="CLAUDE.md"
 GLOBAL_STATS="$HOME/.ato/stats.json"
 LOCAL_STATS=".ato-stats.json"
 TEMPLATES_DIR="${ATO_TEMPLATES:-$HOME/.ato/templates}"
+ATO_LOG="$HOME/.ato/run.log"
 
 TOKENS_PER_LINE=6
 BASELINE_TOKENS=50000
@@ -465,21 +466,59 @@ EOF
   success "CONTEXT.md generated ($final_lines lines — $(( final_lines * TOKENS_PER_LINE )) est. tokens)"
 }
 
+# ─── CLAUDE.md auto-focus instruction ────────────────────────────────
+
+_ensure_focus_instruction() {
+  local file="${1:-$CLAUDE_FILE}"
+  [[ ! -f "$file" ]] && return
+
+  # Already has it
+  grep -q "ato_focus_auto" "$file" 2>/dev/null && return
+
+  if grep -q "^## On startup" "$file" 2>/dev/null; then
+    # Insert as first item under "On startup"
+    local focus_line='1. If `.ato_focus_auto.md` exists, read it immediately and follow all session rules inside it. Do not ask — just do it.'
+    awk -v line="$focus_line" '
+      /^## On startup/ { print; print line; next }
+      { print }
+    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  else
+    # Prepend a minimal block before the rest
+    local tmp
+    tmp=$(mktemp)
+    {
+      printf '## On startup\n'
+      printf '1. If `.ato_focus_auto.md` exists, read it immediately and follow all session rules inside it. Do not ask — just do it.\n\n'
+      cat "$file"
+    } > "$tmp" && mv "$tmp" "$file"
+  fi
+  success "CLAUDE.md: added auto-focus instruction"
+}
+
 # ─── Hook setup ───────────────────────────────────────────────────────
 
 _setup_hook() {
-  # Only in git repos (real projects)
   [[ ! -d ".git" ]] && return
 
   local settings_dir=".claude"
   local settings_file="$settings_dir/settings.json"
-
   mkdir -p "$settings_dir"
 
   if [[ ! -f "$settings_file" ]]; then
     cat > "$settings_file" << 'HOOKEOF'
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ato go --quiet"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -494,11 +533,43 @@ _setup_hook() {
   }
 }
 HOOKEOF
-    success "Claude Code stop-hook installed → ato sync runs automatically after each session"
-  elif ! grep -q "ato sync" "$settings_file" 2>/dev/null; then
-    warn "Existing .claude/settings.json found. Add this manually to enable auto-sync:"
+    success "Claude Code hooks installed:"
+    dim "  UserPromptSubmit → ato go --quiet  (auto-focuses on session start)"
+    dim "  Stop             → ato sync        (auto-syncs after each session)"
+    return
+  fi
+
+  local updated=0
+
+  if ! grep -q "ato sync" "$settings_file" 2>/dev/null; then
+    warn "Existing .claude/settings.json found — add Stop hook manually:"
     dim '  "Stop": [{"matcher":"","hooks":[{"type":"command","command":"ato sync"}]}]'
   fi
+
+  if ! grep -q "ato go" "$settings_file" 2>/dev/null; then
+    # Inject UserPromptSubmit before the first "hooks" key or closing brace
+    if grep -q '"hooks"' "$settings_file" 2>/dev/null; then
+      awk '
+        /"hooks"[[:space:]]*:/ && !done {
+          print "    \"UserPromptSubmit\": [{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"ato go --quiet\"}]}],"
+          done=1
+        }
+        { print }
+      ' "$settings_file" > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
+    else
+      awk '
+        /^\}[[:space:]]*$/ && !done {
+          print "  ,\"hooks\":{\"UserPromptSubmit\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"ato go --quiet\"}]}]}"
+          done=1
+        }
+        { print }
+      ' "$settings_file" > "$settings_file.tmp" && mv "$settings_file.tmp" "$settings_file"
+    fi
+    success "Added UserPromptSubmit hook → ato go --quiet"
+    updated=$(( updated + 1 ))
+  fi
+
+  [[ $updated -eq 0 ]] && dim "  Hooks already configured"
 }
 
 # ─── Task helpers ─────────────────────────────────────────────────────
@@ -769,12 +840,14 @@ cmd_init() {
 
   # CLAUDE.md
   if [[ -f "$CLAUDE_FILE" ]]; then
-    warn "$CLAUDE_FILE already exists — skipping"
+    warn "$CLAUDE_FILE already exists — checking for auto-focus instruction..."
+    _ensure_focus_instruction "$CLAUDE_FILE"
   else
     local tmpl="$TEMPLATES_DIR/$CLAUDE_FILE"
     if [[ -f "$tmpl" ]]; then
       cp "$tmpl" "$CLAUDE_FILE"
       sed -i.bak "s/\[PROJECT_NAME\]/$project/g" "$CLAUDE_FILE" && rm -f "$CLAUDE_FILE.bak"
+      _ensure_focus_instruction "$CLAUDE_FILE"
     else
       _create_minimal "$CLAUDE_FILE" "$project"
     fi
@@ -797,7 +870,7 @@ cmd_init() {
   echo -e "  ${BOLD}Next steps:${RESET}"
   dim "  1. Review CONTEXT.md — fill in Anti-patterns + any missing info"
   dim "  2. Run: claude"
-  dim "     Claude reads CONTEXT.md automatically and asks what to work on"
+  dim "     ato auto-focuses your session — just start typing"
   dim "  3. After each session, CONTEXT.md is updated automatically"
   echo ""
 }
@@ -869,6 +942,10 @@ cmd_sync() {
   fi
   info "Saved ~$(fmt_tokens $saved) tokens this session"
 
+  # Clear session lock so next session re-generates focus file
+  local lock_file="/tmp/.ato_session_$(basename "$PWD" | sed 's/[^a-zA-Z0-9]/_/g')"
+  rm -f "$lock_file"
+
   # Compaction warning: if last sync was not today, compaction may have occurred
   local last_s today
   last_s=$(json_get "$LOCAL_STATS" "last_session" 2>/dev/null | cut -c1-10 || echo "")
@@ -922,13 +999,13 @@ EOF
 }
 
 cmd_focus() {
-  # Parse --budget flag anywhere in args
-  local budget_k=0 args=()
+  # Parse --quiet and --budget flags
+  local budget_k=0 quiet=0 args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --quiet|-q) quiet=1 ;;
       --budget)
         shift
-        # accept "40k", "40K", or "40000"
         budget_k=$(echo "${1:-0}" | sed 's/[kK]$//')
         [[ "$budget_k" -gt 0 ]] 2>/dev/null || budget_k=0
         ;;
@@ -944,6 +1021,34 @@ cmd_focus() {
   set -- "${args[@]+"${args[@]}"}"
 
   local task_id="${1:-}"
+
+  # Quiet mode: used by UserPromptSubmit hook — silent, session-guarded
+  if [[ "$quiet" -eq 1 ]]; then
+    mkdir -p "$(dirname "$ATO_LOG")"
+    local lock_file="/tmp/.ato_session_$(basename "$PWD" | sed 's/[^a-zA-Z0-9]/_/g')"
+
+    # Session guard: only regenerate once per session (4h TTL)
+    if [[ -f "$lock_file" ]]; then
+      local now mod_time age
+      now=$(date +%s)
+      mod_time=$(stat -f %m "$lock_file" 2>/dev/null || stat -c %Y "$lock_file" 2>/dev/null || echo 0)
+      age=$(( now - mod_time ))
+      if [[ $age -lt 14400 ]]; then
+        printf "[%s] already focused (age: %ds) — skipping\n" "$(date +%H:%M)" "$age" >> "$ATO_LOG"
+        return
+      fi
+    fi
+
+    if [[ ! -f "$CONTEXT_FILE" ]]; then
+      printf "[%s] no CONTEXT.md — skipping (run: ato init)\n" "$(date +%H:%M)" >> "$ATO_LOG"
+      return
+    fi
+
+    printf "[%s] ato go --quiet: %s\n" "$(date +%H:%M)" "$(basename "$PWD")" >> "$ATO_LOG"
+    _auto_focus "$budget_k" >> "$ATO_LOG" 2>&1 || true
+    touch "$lock_file"
+    return
+  fi
 
   if [[ -z "$task_id" ]]; then
     _auto_focus "$budget_k"
@@ -1435,9 +1540,10 @@ EOF
 <!-- Claude Code reads this automatically at the start of every session -->
 
 ## On startup
-1. Read \`CONTEXT.md\` fully — it is the complete map of this project
-2. Say exactly: "Ready. What are we working on today?"
-3. Wait for the user's answer before doing anything else
+1. If \`.ato_focus_auto.md\` exists, read it immediately and follow all session rules inside it. Do not ask — just do it.
+2. Read \`CONTEXT.md\` fully — it is the complete map of this project
+3. Say exactly: "Ready. What are we working on today?"
+4. Wait for the user's answer before doing anything else
 
 ## Working rules
 - Only read files relevant to what the user asks for
@@ -1939,9 +2045,15 @@ cmd_check() {
   fi
 
   if [[ -f ".claude/settings.json" ]] && grep -q "ato sync" .claude/settings.json 2>/dev/null; then
-    printf "  ${GREEN}✓${RESET}  %-16s %s\n" "Stop-hook" "active"
+    printf "  ${GREEN}✓${RESET}  %-16s %s\n" "Auto-sync" "active  (Stop hook)"
   else
-    printf "  ${YELLOW}!${RESET}  %-16s %s\n" "Stop-hook" "not set — run: ato init"
+    printf "  ${YELLOW}!${RESET}  %-16s %s\n" "Auto-sync" "not set — run: ato init"
+  fi
+
+  if [[ -f ".claude/settings.json" ]] && grep -q "ato go" .claude/settings.json 2>/dev/null; then
+    printf "  ${GREEN}✓${RESET}  %-16s %s\n" "Auto-focus" "active  (UserPromptSubmit hook)"
+  else
+    printf "  ${YELLOW}!${RESET}  %-16s %s\n" "Auto-focus" "not set — run: ato init"
   fi
 
   local available=$(( WINDOW - RESERVED - startup_tokens ))
@@ -2064,24 +2176,28 @@ cmd_help() {
   echo ""
   echo -e "${BOLD}WORKFLOW${RESET}"
   echo ""
-  echo -e "  ${CYAN}1.${RESET}  ${BOLD}ato init${RESET}   Once per project — scans repo, generates CONTEXT.md"
-  echo -e "  ${CYAN}2.${RESET}  ${BOLD}ato go${RESET}     Before each session — auto-detects work area from git"
-  echo -e "  ${CYAN}3.${RESET}  Work       Claude reads the focused file, stays on-topic"
-  echo -e "  ${CYAN}4.${RESET}  Auto-sync  Stop-hook runs ato sync → savings recorded"
+  echo -e "  ${CYAN}1.${RESET}  ${BOLD}ato init${RESET}   Once per project — wires everything up"
+  echo -e "  ${CYAN}2.${RESET}  ${BOLD}claude${RESET}     Open Claude Code — ato focuses automatically"
+  echo -e "  ${CYAN}3.${RESET}  Work       Just type. Claude reads the focused context."
+  echo -e "  ${CYAN}4.${RESET}  Auto-sync  Session ends → ato sync runs → savings recorded"
+  echo ""
+  echo -e "  ${DIM}No copy-paste. No manual ato go. Just open Claude and work.${RESET}"
   echo ""
   echo -e "${BOLD}COMMANDS${RESET}"
   echo ""
-  printf "  ${GREEN}%-22s${RESET} %s\n" "init [name]"   "Scan project → CONTEXT.md + CLAUDE.md + stop-hook"
-  printf "  ${GREEN}%-22s${RESET} %s\n" "go [topic]"    "Auto-focus from git (or focus on a topic)"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "init [name]"   "Setup: CONTEXT.md + CLAUDE.md + auto-focus hook"
   printf "  ${GREEN}%-22s${RESET} %s\n" "note \"text\""  "Save a decision to CONTEXT.md (survives compaction)"
   printf "  ${GREEN}%-22s${RESET} %s\n" "check"         "Project health + context usage + savings"
-  printf "  ${GREEN}%-22s${RESET} %s\n" "audit"         "Token budget per section + CLAUDE.md size audit"
+  printf "  ${GREEN}%-22s${RESET} %s\n" "audit"         "Token budget per section + CLAUDE.md size"
   printf "  ${GREEN}%-22s${RESET} %s\n" "update"        "Self-update to latest version"
   echo ""
-  echo -e "  ${DIM}ato go --budget 40k   Trim scope for Pro plan token limits${RESET}"
-  echo -e "  ${DIM}ato audit --scope '*.ts'  Token cost of a file set${RESET}"
-  echo -e "  ${DIM}ato mcp install       Register as MCP server in Claude Code${RESET}"
-  echo -e "  ${DIM}ato task add/done     Optional task tracking${RESET}"
+  echo -e "  ${DIM}Power options:${RESET}"
+  echo -e "  ${DIM}  ato go [topic]        Manual focus (auto runs on session start)${RESET}"
+  echo -e "  ${DIM}  ato go --budget 40k   Trim scope for Pro plan token limits${RESET}"
+  echo -e "  ${DIM}  ato audit --scope '*.ts'  Token cost of a file set${RESET}"
+  echo -e "  ${DIM}  ato mcp install       Register as MCP server in Claude Code${RESET}"
+  echo -e "  ${DIM}  ato task add/done     Optional task tracking${RESET}"
+  echo -e "  ${DIM}  tail -f ~/.ato/run.log  Watch auto-focus activity${RESET}"
   echo ""
 }
 
